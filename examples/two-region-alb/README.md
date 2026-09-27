@@ -1,10 +1,10 @@
 # Two-region ALB accelerator
 
-The shape [ADR 0004](../../../../docs/adr/0004-edge-ingress-and-egress.md)
-actually calls for: one listener and two regional endpoint groups, each
-pointed at a regional public ALB, so dynamic API traffic is steered
-active-active by anycast IP addresses and ALB health checks rather than by
-DNS.
+The shape ADR 0004 (Separate static edge delivery, dynamic API acceleration,
+and conditional egress inspection) actually calls for: one listener and two
+regional endpoint groups, each pointed at a regional public ALB, so dynamic
+API traffic is steered active-active by anycast IP addresses and ALB health
+checks rather than by DNS.
 
 ## Why this is a placeholder, not a live `aws.modules.alb` call
 

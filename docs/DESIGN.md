@@ -9,8 +9,9 @@ consumer yet.
 module call: the accelerator itself, its listeners, and the endpoint groups
 that steer each listener's traffic into one or more AWS regions.
 
-This is the anycast ingress layer [ADR 0004](../../../docs/adr/0004-edge-ingress-and-egress.md)
-assigns to dynamic API traffic: "Dynamic API requests use Global Accelerator to
+This is the anycast ingress layer ADR 0004 (Separate static edge delivery,
+dynamic API acceleration, and conditional egress inspection) assigns to
+dynamic API traffic: "Dynamic API requests use Global Accelerator to
 two regional public ALBs... Anycast API ingress and ALB health endpoints
 provide predictable regional steering." The module creates the accelerator,
 its listeners, and its endpoint groups; it does **not** create, know about, or
