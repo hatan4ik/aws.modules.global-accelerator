@@ -38,7 +38,7 @@ module "alb_eu_west_1" {
 }
 
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 
   name = "public-api"
 
@@ -49,12 +49,10 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "api"
+    "api/us-east-1" = {
       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
     }
-    "eu-west-1" = {
-      listener_key = "api"
+    "api/eu-west-1" = {
       endpoint_configurations = [{ endpoint_id = module.alb_eu_west_1.arn }]
     }
   }
@@ -115,6 +113,6 @@ No resources.
 | <a name="output_accelerator_arn"></a> [accelerator\_arn](#output\_accelerator\_arn) | ARN of the accelerator. |
 | <a name="output_accelerator_dns_name"></a> [accelerator\_dns\_name](#output\_accelerator\_dns\_name) | DNS name to point a Route 53 alias record at. |
 | <a name="output_accelerator_hosted_zone_id"></a> [accelerator\_hosted\_zone\_id](#output\_accelerator\_hosted\_zone\_id) | Hosted zone ID for the Route 53 alias record. |
-| <a name="output_ip_sets"></a> [ip\_sets](#output\_ip\_sets) | Static anycast IP addresses AWS assigned. |
+| <a name="output_ip_addresses"></a> [ip\_addresses](#output\_ip\_addresses) | Static anycast IP addresses AWS assigned, split into ipv4 and ipv6 lists. |
 | <a name="output_listener_arns"></a> [listener\_arns](#output\_listener\_arns) | ARN of the api listener. |
 <!-- END_TF_DOCS -->

@@ -21,14 +21,12 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "api"
+    "api/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = var.us_east_1_alb_arn },
       ]
     }
-    "eu-west-1" = {
-      listener_key = "api"
+    "api/eu-west-1" = {
       endpoint_configurations = [
         { endpoint_id = var.eu_west_1_alb_arn },
       ]

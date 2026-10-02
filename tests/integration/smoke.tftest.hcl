@@ -42,8 +42,7 @@ run "smoke" {
     }
 
     endpoint_groups = {
-      (run.setup.region) = {
-        listener_key = "primary"
+      "primary/${run.setup.region}" = {
         endpoint_configurations = [
           { endpoint_id = run.setup.allocation_id },
         ]
@@ -69,8 +68,8 @@ run "smoke" {
   }
 
   assert {
-    condition     = length(output.ip_sets) > 0 && alltrue([for ip in output.ip_sets : can(cidrhost("${ip}/32", 0))])
-    error_message = "ip_sets must list at least one real anycast IPv4 address."
+    condition     = length(output.ip_addresses.ipv4) > 0 && alltrue([for ip in output.ip_addresses.ipv4 : can(cidrhost("${ip}/32", 0))]) && length(output.ip_addresses.ipv6) == 0
+    error_message = "ip_addresses.ipv4 must list at least one real anycast IPv4 address, and ip_addresses.ipv6 must be empty for an IPV4 accelerator."
   }
 
   assert {
@@ -89,7 +88,7 @@ run "smoke" {
   }
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this[run.setup.region].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this[run.setup.region].health_check_protocol == "TCP"
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/${run.setup.region}"].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this["primary/${run.setup.region}"].health_check_protocol == "TCP"
     error_message = "The real API must accept the endpoint group defaults: fully dialed, TCP health check."
   }
 }

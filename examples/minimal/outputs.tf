@@ -8,7 +8,7 @@ output "accelerator_dns_name" {
   value       = module.global_accelerator.accelerator_dns_name
 }
 
-output "ip_sets" {
-  description = "Static anycast IP addresses AWS assigned."
-  value       = module.global_accelerator.ip_sets
+output "ip_addresses" {
+  description = "Static anycast IP addresses AWS assigned, split into ipv4 and ipv6 lists."
+  value       = module.global_accelerator.ip_addresses
 }

@@ -22,17 +22,24 @@ variables {
     }
   }
 
+  # Both listeners have an endpoint group in us-east-1 at the same time: the
+  # (listener, region) pair is what AWS keys endpoint groups on. The v1
+  # region-only map key made this unrepresentable; the composite
+  # "<listener_key>/<region>" key is what makes it expressible.
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "primary"
+    "primary/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
       ]
     }
-    "eu-west-1" = {
-      listener_key = "secondary"
+    "secondary/us-east-1" = {
       endpoint_configurations = [
-        { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
+        { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/secondary/60dc6c495c0c9188" }
+      ]
+    }
+    "secondary/eu-west-1" = {
+      endpoint_configurations = [
+        { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/secondary/70dc6c495c0c9188" }
       ]
     }
   }
@@ -45,8 +52,11 @@ override_resource {
     arn            = "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd"
     dns_name       = "a1234567890abcdef.awsglobalaccelerator.com"
     hosted_zone_id = "Z2BJ6XQ5FK7U4H"
+    # A DUAL_STACK-shaped response: IPv4 and IPv6 sets, deliberately out of
+    # order, so the output must both sort and keep the two families apart.
     ip_sets = [
       { ip_addresses = ["5.6.7.8"], ip_family = "IPv4" },
+      { ip_addresses = ["2600:9000:a000::2", "2600:9000:a000::1"], ip_family = "IPv6" },
       { ip_addresses = ["1.2.3.4"], ip_family = "IPv4" },
     ]
   }
@@ -72,13 +82,41 @@ run "resolves_each_endpoint_group_to_the_listener_named_by_its_key" {
   command = apply
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this["us-east-1"].listener_arn == "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd/listener/1111111111"
-    error_message = "The us-east-1 group's listener_key is primary; it must attach to the primary listener's ARN, not whichever listener the for_each visits first."
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].listener_arn == "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd/listener/1111111111"
+    error_message = "The primary/us-east-1 group must attach to the primary listener's ARN, not whichever listener the for_each visits first."
   }
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this["eu-west-1"].listener_arn == "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd/listener/2222222222"
-    error_message = "The eu-west-1 group's listener_key is secondary; it must attach to the secondary listener's ARN."
+    condition     = aws_globalaccelerator_endpoint_group.this["secondary/us-east-1"].listener_arn == "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd/listener/2222222222" && aws_globalaccelerator_endpoint_group.this["secondary/eu-west-1"].listener_arn == "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd/listener/2222222222"
+    error_message = "Both secondary/* groups must attach to the secondary listener's ARN."
+  }
+
+  assert {
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].endpoint_group_region == "us-east-1" && aws_globalaccelerator_endpoint_group.this["secondary/us-east-1"].endpoint_group_region == "us-east-1" && aws_globalaccelerator_endpoint_group.this["secondary/eu-west-1"].endpoint_group_region == "eu-west-1"
+    error_message = "Each endpoint group's region must be the region half of its composite key."
+  }
+}
+
+run "two_listeners_each_have_an_endpoint_group_in_the_same_region" {
+  command = apply
+
+  # The case the v1.0.0 region-only key could not express: a TCP listener and
+  # a UDP listener both steering into us-east-1 simultaneously, as two
+  # distinct endpoint groups attached to two distinct listeners.
+  assert {
+    condition = length([
+      for group in aws_globalaccelerator_endpoint_group.this : group
+      if group.endpoint_group_region == "us-east-1"
+    ]) == 2
+    error_message = "Two endpoint groups must exist in us-east-1 at once, one per listener."
+  }
+
+  assert {
+    condition = length(distinct([
+      for group in aws_globalaccelerator_endpoint_group.this : group.listener_arn
+      if group.endpoint_group_region == "us-east-1"
+    ])) == 2
+    error_message = "The two us-east-1 endpoint groups must attach to two different listeners."
   }
 }
 
@@ -96,8 +134,13 @@ run "reports_the_documented_outputs" {
   }
 
   assert {
-    condition     = tolist(output.ip_sets) == tolist(["1.2.3.4", "5.6.7.8"])
-    error_message = "ip_sets must flatten every ip_addresses entry across the accelerator's ip_sets blocks into one sorted list of strings."
+    condition     = tolist(output.ip_addresses.ipv4) == tolist(["1.2.3.4", "5.6.7.8"])
+    error_message = "ip_addresses.ipv4 must hold every IPv4 anycast address across the accelerator's ip_sets blocks, sorted, and nothing else."
+  }
+
+  assert {
+    condition     = tolist(output.ip_addresses.ipv6) == tolist(["2600:9000:a000::1", "2600:9000:a000::2"])
+    error_message = "ip_addresses.ipv6 must hold every IPv6 anycast address, sorted, kept apart from the IPv4 ones."
   }
 
   assert {
