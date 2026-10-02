@@ -30,6 +30,19 @@ locals {
     if !contains(keys(var.listeners), group.listener_key)
   ])
 
+  # Listener keys that can actually receive traffic: at least one of their
+  # endpoint groups is dialed above zero AND has at least one endpoint with a
+  # non-zero weight. A listener absent from this list routes nowhere, whether
+  # because it has no endpoint groups, every group is dialed to 0%, or every
+  # dialed group's endpoints all carry weight 0. The per-listener precondition
+  # in listeners.tf rejects it.
+  serving_listener_keys = distinct([
+    for group in values(local.endpoint_groups) : group.listener_key
+    if group.group.traffic_dial_percentage > 0 && anytrue([
+      for endpoint in group.group.endpoint_configurations : endpoint.weight > 0
+    ])
+  ])
+
   # The anycast IP addresses AWS assigned, flattened out of the accelerator's
   # ip_sets blocks (one per IP address family) into the single sorted list the
   # output promises.

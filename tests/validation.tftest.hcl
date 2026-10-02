@@ -431,3 +431,109 @@ run "rejects_an_endpoint_group_that_references_an_unknown_listener_key" {
   }
   expect_failures = [aws_globalaccelerator_accelerator.this]
 }
+
+# ---------------------------------------------------------------------------
+# Cross-variable: every listener must be able to serve traffic
+# ---------------------------------------------------------------------------
+
+run "rejects_a_listener_whose_every_group_is_dialed_to_zero" {
+  command = plan
+  variables {
+    # primary serves; secondary's only groups are dialed to 0. The accelerator
+    # as a whole still has a non-zero dial, so the per-variable validation
+    # passes; only the per-listener precondition catches the dead listener.
+    listeners = {
+      primary = {
+        port_ranges = [{ from_port = 443, to_port = 443 }]
+      }
+      secondary = {
+        protocol    = "UDP"
+        port_ranges = [{ from_port = 51820, to_port = 51820 }]
+      }
+    }
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+      "primary/eu-west-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+      "secondary/us-east-1" = {
+        traffic_dial_percentage = 0
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/secondary/60dc6c495c0c9188" }
+        ]
+      }
+      "secondary/eu-west-1" = {
+        traffic_dial_percentage = 0
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/net/secondary/70dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [aws_globalaccelerator_listener.this["secondary"]]
+}
+
+run "rejects_a_listener_whose_dialed_group_has_only_zero_weight_endpoints" {
+  command = plan
+  variables {
+    # Every group is fully dialed, but every endpoint carries weight 0, so
+    # nothing behind the listener takes traffic.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188", weight = 0 }
+        ]
+      }
+      "primary/eu-west-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188", weight = 0 },
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/tertiary/50dc6c495c0c9188", weight = 0 },
+        ]
+      }
+    }
+  }
+  expect_failures = [aws_globalaccelerator_listener.this["primary"]]
+}
+
+run "rejects_a_listener_whose_only_weighted_endpoints_sit_in_a_zero_dialed_group" {
+  command = plan
+  variables {
+    # Neither condition alone is enough: us-east-1 is dialed but all-zero
+    # weight, eu-west-1 has a weighted endpoint but is dialed to 0.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188", weight = 0 }
+        ]
+      }
+      "primary/eu-west-1" = {
+        traffic_dial_percentage = 0
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [aws_globalaccelerator_listener.this["primary"]]
+}
+
+run "rejects_a_listener_with_no_endpoint_group" {
+  command = plan
+  variables {
+    listeners = {
+      primary = {
+        port_ranges = [{ from_port = 443, to_port = 443 }]
+      }
+      orphan = {
+        port_ranges = [{ from_port = 8443, to_port = 8443 }]
+      }
+    }
+  }
+  expect_failures = [aws_globalaccelerator_listener.this["orphan"]]
+}

@@ -116,6 +116,20 @@ names every unresolved listener key in one message, rather than failing on
 whichever `for_each` key Terraform's own "Invalid index" error happens to
 reach first.
 
+The same applies to the per-listener serving rule: every listener must have at
+least one endpoint group dialed above zero that contains at least one endpoint
+with a non-zero weight. The per-variable `validation` on `endpoint_groups`
+only sees that variable, so it can only require one non-zero dial somewhere in
+the whole map — it cannot tell that a second listener's groups are all dialed
+to zero, or that a fully dialed group's endpoints all carry weight 0. The
+per-listener rule is a `precondition` on `aws_globalaccelerator_listener.this`
+(evaluated per instance, so the error names the listener), fed by
+`local.serving_listener_keys`. It is a hard precondition rather than an
+advisory `check` because a listener that routes nowhere is never a useful
+applied state: a listener being drained is removed, and a whole accelerator
+being stopped uses `enabled = false`; zero-dialed standby groups beside a
+serving one remain valid.
+
 ## What to build (resources)
 
 - `aws_globalaccelerator_accelerator.this` — one per call, with a

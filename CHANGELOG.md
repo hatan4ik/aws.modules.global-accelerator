@@ -15,6 +15,8 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 - `aws_globalaccelerator_endpoint_group.this` instances are now addressed by the composite key (`this["api/us-east-1"]` instead of `this["us-east-1"]`).
 - The advisory `single_region_endpoint_groups` check now counts distinct regions rather than `endpoint_groups` entries, so two listeners sharing one region still count as one region. It remains advisory.
 
+- **Every listener must now be able to serve traffic** (a per-listener `precondition` on `aws_globalaccelerator_listener.this`). v1.0.0 only required one non-zero `traffic_dial_percentage` anywhere in the map, so a listener with every group dialed to 0%, a listener whose only dialed groups hold weight-0 endpoints, or a listener with no endpoint group at all passed the plan and silently routed nowhere. Each now fails the plan naming the listener. Zero-dialed or zero-weighted standby groups beside a serving group are unaffected.
+
 ### Upgrading from v1.0.0
 
 1. Rewrite every `endpoint_groups` entry: move `listener_key` into the map key and delete the attribute.
@@ -52,6 +54,7 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 ### Added
 
 - `tests/wiring.tftest.hcl` now attaches a TCP listener and a UDP listener to endpoint groups in the same region (`primary/us-east-1` and `secondary/us-east-1`) and proves each resolves to its own listener ARN: the case the v1.0.0 key made unrepresentable.
+- Validation tests for the per-listener serving precondition: all groups dialed to zero on one listener while another serves, a dialed group with only weight-0 endpoints, weighted endpoints only in a zero-dialed group, and a listener with no endpoint group.
 - Validation tests rejecting a region-only (v1.0.0-shaped) key, a key with an empty listener half, and a listener key containing `/`; a check test proving two listeners in one region still trigger `single_region_endpoint_groups`.
 
 ## [1.0.0] - 2026-09-27
