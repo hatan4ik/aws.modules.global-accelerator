@@ -56,7 +56,7 @@ variable "flow_logs" {
 # ---------------------------------------------------------------------------
 
 variable "listeners" {
-  description = "Listeners keyed by a short logical name, referenced by endpoint_groups[*].listener_key. protocol defaults to TCP; port_ranges is one or more inclusive port ranges the listener accepts; client_affinity defaults to NONE (SOURCE_IP pins a client to one endpoint for the accelerator's stickiness window). At least one entry is required."
+  description = "Listeners keyed by a short logical name (no \"/\"), referenced by the listener half of each endpoint_groups key. protocol defaults to TCP; port_ranges is one or more inclusive port ranges the listener accepts; client_affinity defaults to NONE (SOURCE_IP pins a client to one endpoint for the accelerator's stickiness window). At least one entry is required."
   type = map(object({
     protocol = optional(string, "TCP")
     port_ranges = list(object({
@@ -70,6 +70,11 @@ variable "listeners" {
   validation {
     condition     = length(var.listeners) > 0
     error_message = "listeners must contain at least one entry."
+  }
+
+  validation {
+    condition     = alltrue([for key in keys(var.listeners) : can(regex("^[^/]+$", key))])
+    error_message = "Every listeners key must be non-empty and must not contain \"/\", which separates the listener key from the region in endpoint_groups keys."
   }
 
   validation {
@@ -103,9 +108,8 @@ variable "listeners" {
 # ---------------------------------------------------------------------------
 
 variable "endpoint_groups" {
-  description = "Endpoint groups keyed by the AWS region they are created in, for example \"us-east-1\" (the key itself is the region). listener_key must name an entry in listeners. traffic_dial_percentage (default 100) is the share of listener traffic steered to this group; at least one group across the map must be non-zero, since an accelerator whose groups are all dialed to zero serves no traffic. health_check_port defaults to the listener's port when left null. endpoint_configurations lists the endpoints in the group: endpoint_id is an ALB/NLB ARN or an Elastic IP allocation ID, weight (default 128) shares traffic within the group, and client_ip_preservation_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint."
+  description = "Endpoint groups keyed by \"<listener_key>/<region>\", for example \"api/us-east-1\": the part before the slash must name an entry in listeners and the part after it is the AWS region the group is created in. This mirrors the Global Accelerator rule of one endpoint group per (listener, region) pair, so M listeners and N regions compose into up to M x N groups. traffic_dial_percentage (default 100) is the share of listener traffic steered to this group; at least one group across the map must be non-zero, since an accelerator whose groups are all dialed to zero serves no traffic. health_check_port defaults to the listener's port when left null. endpoint_configurations lists the endpoints in the group: endpoint_id is an ALB/NLB ARN or an Elastic IP allocation ID, weight (default 128) shares traffic within the group, and client_ip_preservation_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint."
   type = map(object({
-    listener_key                  = string
     traffic_dial_percentage       = optional(number, 100)
     health_check_port             = optional(number)
     health_check_protocol         = optional(string, "TCP")
@@ -126,8 +130,8 @@ variable "endpoint_groups" {
   }
 
   validation {
-    condition     = alltrue([for region in keys(var.endpoint_groups) : can(regex("^[a-z]{2}-(gov-|iso-|isob-)?[a-z]+-[0-9]$", region))])
-    error_message = "Every endpoint_groups key must look like an AWS region, for example us-east-1, eu-west-2, or us-gov-west-1."
+    condition     = alltrue([for key in keys(var.endpoint_groups) : can(regex("^[^/]+/[a-z]{2}-(gov-|iso-|isob-)?[a-z]+-[0-9]$", key))])
+    error_message = "Every endpoint_groups key must be \"<listener_key>/<region>\", for example api/us-east-1, primary/eu-west-2, or vpn/us-gov-west-1."
   }
 
   validation {

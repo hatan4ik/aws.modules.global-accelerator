@@ -6,8 +6,8 @@ Provisions one AWS Global Accelerator per module call: the accelerator, its list
 
 What you get from `name`, one listener, and one endpoint group, without setting anything else:
 
-- One cross-reference, not nested structures. `listeners` and `endpoint_groups` are both maps — `listeners` keyed by a short logical name you choose, `endpoint_groups` keyed by the AWS region it runs in, since Global Accelerator allows exactly one endpoint group per listener per region and the region already is the identity. An endpoint group names the `listener_key` it attaches to, so `M` listeners and `N` regions compose freely instead of forcing you to repeat identical endpoint groups per listener or identical listeners per region.
-- A plan-time check that a typo does not become a confusing apply-time error. `endpoint_groups[*].listener_key` must name a key in `listeners`; a value that does not fails the plan with every unresolved key named in one message, not Terraform's own "Invalid index" error on whichever key it reaches first.
+- One cross-reference, not nested structures. `listeners` and `endpoint_groups` are both maps — `listeners` keyed by a short logical name you choose, `endpoint_groups` keyed `"<listener_key>/<region>"` (for example `"api/us-east-1"`), since Global Accelerator allows exactly one endpoint group per listener per region and that pair is the endpoint group's identity. `M` listeners and `N` regions compose freely into up to `M×N` endpoint groups — a TCP listener and a UDP listener can each have their own group in the same region — without repeating identical endpoint groups per listener or identical listeners per region.
+- A plan-time check that a typo does not become a confusing apply-time error. The listener half of every `endpoint_groups` key must name a key in `listeners`; one that does not fails the plan with every unresolved key named in one message, not Terraform's own "Invalid index" error on whichever key it reaches first.
 - Every documented Global Accelerator bound enforced before you apply: port ranges 1-65535 with `from_port <= to_port`, weights 0-255, traffic-dial percentages 0-100 with at least one group across the map non-zero (an accelerator whose groups are all dialed to zero serves no traffic), health-check intervals restricted to the 10 or 30 seconds the API actually accepts, and a region key that looks like a real AWS region.
 - Endpoints stay bring-your-own. `endpoint_id` is a plain ARN or allocation ID string; the module never creates, reads, or assumes the shape of the resource behind it, so it fits in front of an `aws.modules.alb` pair, a hand-written NLB, or a pair of Elastic IPs equally.
 - Flow logs and client IP preservation default to what most callers want without being silently on: flow logs are off until you name a bucket you own (an advisory check reminds you), and `client_ip_preservation_enabled` defaults to `true` so origins see the real client IP.
@@ -17,7 +17,7 @@ What you get from `name`, one listener, and one endpoint group, without setting 
 
 ```hcl
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 
   name = "public-api"
 
@@ -30,14 +30,12 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "api"
+    "api/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = module.alb_us_east_1.arn },
       ]
     }
-    "eu-west-1" = {
-      listener_key = "api"
+    "api/eu-west-1" = {
       endpoint_configurations = [
         { endpoint_id = module.alb_eu_west_1.arn },
       ]
@@ -68,14 +66,13 @@ This creates one accelerator with one TCP/443 listener and two regional endpoint
 root (one accelerator)
 ├── accelerator.tf      aws_globalaccelerator_accelerator.this: dynamic "attributes" for flow_logs; the cross-variable listener-key precondition
 ├── listeners.tf         aws_globalaccelerator_listener.this[<listener key>]: dynamic "port_range"
-├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this[<region>]: listener_arn resolved by listener_key; dynamic "endpoint_configuration"
-├── locals.tf            Tag merging, flow-log presence, the unresolved-listener-key set, ip_sets flattening
+├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this["<listener_key>/<region>"]: listener_arn and region from the key; dynamic "endpoint_configuration"
+├── locals.tf            Tag merging, flow-log presence, endpoint-group key parsing, the unresolved-listener-key set, ip_sets flattening
 ├── checks.tf             flow_logs_disabled, single_region_endpoint_groups (both advisory)
 └── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_sets, listener_arns
 ```
 
-`listeners` and `endpoint_groups` are independent maps joined by `listener_key`, not nested structures: an endpoint group's `listener_arn` is
-`aws_globalaccelerator_listener.this[each.value.listener_key].arn`, and `endpoint_group_region` is always `each.key`, so a region cannot drift from what its own map key says. A `listener_key` that names no `listeners` entry is caught before Terraform ever tries that lookup: `locals.unknown_listener_keys` collects every such value and a `precondition` on the accelerator resource fails the plan naming all of them. See [docs/DESIGN.md](docs/DESIGN.md) for why this needs a precondition rather than a variable validation under Terraform 1.7.
+`listeners` and `endpoint_groups` are independent maps joined by the `endpoint_groups` key, not nested structures: `locals.endpoint_groups` splits each `"<listener_key>/<region>"` key once, an endpoint group's `listener_arn` is `aws_globalaccelerator_listener.this[<listener_key>].arn`, and `endpoint_group_region` is the region half, so neither can drift from what the map key says. A listener key that names no `listeners` entry is caught before Terraform ever tries that lookup: `locals.unknown_listener_keys` collects every such value and a `precondition` on the accelerator resource fails the plan naming all of them. See [docs/DESIGN.md](docs/DESIGN.md) for why this needs a precondition rather than a variable validation under Terraform 1.7.
 
 ## Usage patterns
 
@@ -101,7 +98,7 @@ Observability
 Validation
 
 - Every input is validated at plan time: `name` and `ip_address_type` shape, `flow_logs.bucket_name`/`.prefix` shape, listener protocol (`TCP`/`UDP`), client affinity (`NONE`/`SOURCE_IP`), port ranges (1-65535, `from_port <= to_port`), endpoint-group region-key shape, traffic-dial bounds (0-100), health-check protocol (`TCP`/`HTTP`/`HTTPS`), health-check port (1-65535), health-check interval (10 or 30 seconds — the only values Global Accelerator health checks accept), threshold count (1-10), and endpoint weight (0-255, the Global Accelerator bound) and a non-empty endpoint ID.
-- The one rule that spans both `listeners` and `endpoint_groups` — every `listener_key` must resolve — is a `precondition` on the accelerator resource, not a variable validation, because Terraform 1.7 variable validations may only reference their own variable. See [docs/DESIGN.md](docs/DESIGN.md).
+- The one rule that spans both `listeners` and `endpoint_groups` — the listener half of every `endpoint_groups` key must resolve — is a `precondition` on the accelerator resource, not a variable validation, because Terraform 1.7 variable validations may only reference their own variable. See [docs/DESIGN.md](docs/DESIGN.md).
 
 Not created here
 
@@ -109,7 +106,7 @@ Not created here
 
 ## Lifecycle notes
 
-- Listeners and endpoint groups are `for_each` over `listeners` and `endpoint_groups` respectively, keyed by the caller's own map keys. Adding a listener or an endpoint group adds exactly one resource instance; removing one removes exactly that instance. Neither resource type is taggable in the Global Accelerator API, so only the accelerator carries `tags`.
+- Listeners and endpoint groups are `for_each` over `listeners` and `endpoint_groups` respectively, keyed by the caller's own map keys (`aws_globalaccelerator_endpoint_group.this["api/us-east-1"]`). Adding a listener or an endpoint group adds exactly one resource instance; removing one removes exactly that instance. Neither resource type is taggable in the Global Accelerator API, so only the accelerator carries `tags`.
 - Flow logs are added or removed by changing `flow_logs` between `null` and a value: the `dynamic "attributes"` block in `accelerator.tf` renders only when `flow_logs` is set, so there is nothing to toggle beyond the one input.
 - Health-check settings and `traffic_dial_percentage` are ordinary arguments on `aws_globalaccelerator_endpoint_group`; AWS applies changes to a running endpoint group in place.
 - Two `check` blocks warn without blocking: `flow_logs_disabled`, `single_region_endpoint_groups`.
@@ -126,7 +123,7 @@ Two layers, deliberately separate:
 - Single responsibility. The module owns one accelerator, its listeners, and its endpoint groups, nothing else. Concerns are split by file: `accelerator.tf`, `listeners.tf`, `endpoint_groups.tf`, `locals.tf`, `checks.tf`.
 - Open/closed. New behaviour arrives as data: another entry in `listeners` or `endpoint_groups`, another `endpoint_configurations` entry. No existing behaviour needs the module edited to add a listener, a region, or an endpoint.
 - Liskov substitution. Every `endpoint_id` is treated identically regardless of what kind of resource it names (an ALB ARN, an NLB ARN, an EIP allocation ID); the module renders the same `endpoint_configuration` block for all of them.
-- Interface segregation. `listeners` entries read only listener concerns (protocol, ports, affinity); `endpoint_groups` entries read only endpoint-group concerns (region, dial percentage, health check, endpoints). Neither needs to know about the other beyond the one `listener_key` cross-reference.
+- Interface segregation. `listeners` entries read only listener concerns (protocol, ports, affinity); `endpoint_groups` entries read only endpoint-group concerns (region, dial percentage, health check, endpoints). Neither needs to know about the other beyond the listener half of the `endpoint_groups` key.
 - Dependency inversion. The module depends on identifiers (a listener key, an endpoint ARN or allocation ID, a bucket name), never on how they were produced, and performs no data-source reads.
 
 The full rationale, including why `listeners` and `endpoint_groups` are keyed maps rather than lists and why the listener-key check is a precondition rather than a variable validation, is in [docs/DESIGN.md](docs/DESIGN.md).
@@ -135,7 +132,7 @@ The full rationale, including why `listeners` and `endpoint_groups` are keyed ma
 
 - Terraform `>= 1.7.0, < 2.0.0`. AWS provider `>= 6.35.0, < 7.0.0`.
 - `ip_address_type` accepts `IPV4` and `DUAL_STACK`; the module exposes the accelerator-level setting and does not yet add dual-stack-specific listener inputs, since ADR 0004 specifies IPv4 ALBs. Extending this is additive and non-breaking.
-- Nothing in the v1 interface is scheduled to change. Additions arrive as optional inputs and outputs.
+- Nothing in the v2 interface is scheduled to change. Additions arrive as optional inputs and outputs.
 
 ## Versioning and releases
 
@@ -145,7 +142,7 @@ Pin the full commit SHA of the release tag and record the tag in a comment, so t
 
 ```hcl
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 }
 ```
 

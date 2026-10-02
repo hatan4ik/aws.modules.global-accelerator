@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" before bumping the pinned SHA.
+
+### Changed (BREAKING)
+
+- **`endpoint_groups` is now keyed `"<listener_key>/<region>"`, and the `listener_key` attribute is removed.** v1.0.0 keyed the map by region alone, which allowed at most one endpoint group per region for the whole accelerator: a TCP listener and a UDP listener could never both have an endpoint group in the same region, contradicting the documented `M` listeners × `N` regions composition. Global Accelerator's actual rule is one endpoint group per (listener, region) pair, and the key now says exactly that. Both halves are parsed from the key, so neither the listener nor the region can drift from it. A region-only key (the v1.0.0 shape) now fails the plan with a validation error rather than being reinterpreted.
+- `listeners` keys may no longer contain `/`, which separates the two halves of an `endpoint_groups` key.
+- `aws_globalaccelerator_endpoint_group.this` instances are now addressed by the composite key (`this["api/us-east-1"]` instead of `this["us-east-1"]`).
+- The advisory `single_region_endpoint_groups` check now counts distinct regions rather than `endpoint_groups` entries, so two listeners sharing one region still count as one region. It remains advisory.
+
+### Upgrading from v1.0.0
+
+1. Rewrite every `endpoint_groups` entry: move `listener_key` into the map key and delete the attribute.
+
+   ```hcl
+   # v1.0.0
+   endpoint_groups = {
+     "us-east-1" = {
+       listener_key            = "api"
+       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
+     }
+   }
+
+   # v2.0.0
+   endpoint_groups = {
+     "api/us-east-1" = {
+       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
+     }
+   }
+   ```
+
+2. In the **same change**, add one `moved` block per existing endpoint group in the calling root module, so Terraform re-addresses the existing groups instead of destroying and recreating them. Without it, the plan destroys each endpoint group and creates a new one for the same listener and region, which drops traffic to that region for the duration and can fail outright, since AWS allows only one group per listener and region.
+
+   ```hcl
+   moved {
+     from = module.global_accelerator.aws_globalaccelerator_endpoint_group.this["us-east-1"]
+     to   = module.global_accelerator.aws_globalaccelerator_endpoint_group.this["api/us-east-1"]
+   }
+   ```
+
+   (`terraform state mv` with the same two addresses is the alternative where `moved` blocks are not wanted.)
+
+3. Plan and confirm the endpoint groups show only `has moved to` lines with no `destroy` or `create` for any `aws_globalaccelerator_endpoint_group`, then apply. The `moved` blocks can be deleted after every state that used v1.0.0 has applied them.
+
+### Added
+
+- `tests/wiring.tftest.hcl` now attaches a TCP listener and a UDP listener to endpoint groups in the same region (`primary/us-east-1` and `secondary/us-east-1`) and proves each resolves to its own listener ARN: the case the v1.0.0 key made unrepresentable.
+- Validation tests rejecting a region-only (v1.0.0-shaped) key, a key with an empty listener half, and a listener key containing `/`; a check test proving two listeners in one region still trigger `single_region_endpoint_groups`.
+
 ## [1.0.0] - 2026-09-27
 
 Initial release. One module call provisions one AWS Global Accelerator, its listeners, and its endpoint groups, pointed at ALB/NLB ARNs or Elastic IP allocation IDs a caller supplies. There is no prior version and no migration.

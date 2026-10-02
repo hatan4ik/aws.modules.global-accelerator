@@ -38,7 +38,7 @@ module "alb_eu_west_1" {
 }
 
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 
   name = "public-api"
 
@@ -49,12 +49,10 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "api"
+    "api/us-east-1" = {
       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
     }
-    "eu-west-1" = {
-      listener_key = "api"
+    "api/eu-west-1" = {
       endpoint_configurations = [{ endpoint_id = module.alb_eu_west_1.arn }]
     }
   }

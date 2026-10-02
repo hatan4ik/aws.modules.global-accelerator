@@ -15,14 +15,12 @@ variables {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "primary"
+    "primary/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
       ]
     }
-    "eu-west-1" = {
-      listener_key = "primary"
+    "primary/eu-west-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
       ]
@@ -93,6 +91,18 @@ run "rejects_empty_listeners" {
     endpoint_groups = {}
   }
   expect_failures = [var.listeners, var.endpoint_groups]
+}
+
+run "rejects_a_listener_key_containing_a_slash" {
+  command = plan
+  variables {
+    listeners = {
+      "api/v2" = {
+        port_ranges = [{ from_port = 443, to_port = 443 }]
+      }
+    }
+  }
+  expect_failures = [var.listeners]
 }
 
 run "rejects_an_unknown_listener_protocol" {
@@ -177,8 +187,37 @@ run "rejects_a_key_that_does_not_look_like_a_region" {
   command = plan
   variables {
     endpoint_groups = {
-      "not-a-region" = {
-        listener_key = "primary"
+      "primary/not-a-region" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_region_only_key_from_the_v1_0_0_interface" {
+  command = plan
+  variables {
+    # The v1.0.0 shape: keyed by region alone. It must fail loudly at plan
+    # rather than be reinterpreted, so an un-migrated caller cannot apply.
+    endpoint_groups = {
+      "us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_key_with_an_empty_listener_half" {
+  command = plan
+  variables {
+    endpoint_groups = {
+      "/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
         ]
@@ -192,15 +231,13 @@ run "rejects_every_group_dialed_to_zero" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key            = "primary"
+      "primary/us-east-1" = {
         traffic_dial_percentage = 0
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
         ]
       }
-      "eu-west-1" = {
-        listener_key            = "primary"
+      "primary/eu-west-1" = {
         traffic_dial_percentage = 0
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
@@ -215,8 +252,7 @@ run "rejects_a_traffic_dial_percentage_above_100" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key            = "primary"
+      "primary/us-east-1" = {
         traffic_dial_percentage = 150
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -231,8 +267,7 @@ run "rejects_a_negative_traffic_dial_percentage" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key            = "primary"
+      "primary/us-east-1" = {
         traffic_dial_percentage = -1
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -247,8 +282,7 @@ run "rejects_an_unknown_health_check_protocol" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key          = "primary"
+      "primary/us-east-1" = {
         health_check_protocol = "FTP"
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -263,8 +297,7 @@ run "rejects_a_health_check_port_above_65535" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key      = "primary"
+      "primary/us-east-1" = {
         health_check_port = 70000
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -279,8 +312,7 @@ run "rejects_a_health_check_interval_other_than_10_or_30" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key                  = "primary"
+      "primary/us-east-1" = {
         health_check_interval_seconds = 15
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -295,8 +327,7 @@ run "rejects_a_threshold_count_of_zero" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key    = "primary"
+      "primary/us-east-1" = {
         threshold_count = 0
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -311,8 +342,7 @@ run "rejects_a_threshold_count_above_10" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key    = "primary"
+      "primary/us-east-1" = {
         threshold_count = 11
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
@@ -327,8 +357,7 @@ run "rejects_an_endpoint_group_with_no_endpoint_configurations" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key            = "primary"
+      "primary/us-east-1" = {
         endpoint_configurations = []
       }
     }
@@ -340,8 +369,7 @@ run "rejects_a_blank_endpoint_id" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key = "primary"
+      "primary/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "   " }
         ]
@@ -355,8 +383,7 @@ run "rejects_a_weight_above_255" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key = "primary"
+      "primary/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188", weight = 256 }
         ]
@@ -370,8 +397,7 @@ run "rejects_a_negative_weight" {
   command = plan
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key = "primary"
+      "primary/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188", weight = -1 }
         ]
@@ -382,7 +408,7 @@ run "rejects_a_negative_weight" {
 }
 
 # ---------------------------------------------------------------------------
-# Cross-variable: endpoint_groups[*].listener_key must resolve in listeners
+# Cross-variable: the listener half of every endpoint_groups key must resolve
 # ---------------------------------------------------------------------------
 
 run "rejects_an_endpoint_group_that_references_an_unknown_listener_key" {
@@ -391,14 +417,12 @@ run "rejects_an_endpoint_group_that_references_an_unknown_listener_key" {
     # Two regions, so the single_region_endpoint_groups advisory check does
     # not also fire and confuse this precondition-only assertion.
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key = "typo"
+      "typo/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
         ]
       }
-      "eu-west-1" = {
-        listener_key = "primary"
+      "primary/eu-west-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
         ]

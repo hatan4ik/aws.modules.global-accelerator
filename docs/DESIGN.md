@@ -1,7 +1,8 @@
 # Design: aws.modules.global-accelerator v1
 
-Status: accepted 2026-09-27. New module; there is no v0.x baseline and no live
-consumer yet.
+Status: accepted 2026-09-27; revised for v2.0.0 on 2026-10-01 (endpoint
+groups keyed by `"<listener_key>/<region>"`, see "Why keyed maps, not lists").
+There is no live consumer yet.
 
 ## Purpose
 
@@ -42,9 +43,10 @@ with `aws.modules.route53`.
 - `listeners`: a map keyed by a short logical name (`primary`, `api`, `vpn`,
   ...), each with `protocol` (default `TCP`), one or more `port_ranges`, and
   `client_affinity` (default `NONE`). At least one entry required.
-- `endpoint_groups`: a map keyed by the AWS region it is created in — the map
-  key **is** the region, validated to look like one. Each entry names the
-  `listener_key` it attaches to, a `traffic_dial_percentage` (default `100`),
+- `endpoint_groups`: a map keyed `"<listener_key>/<region>"` — the part
+  before the slash names the `listeners` entry the group attaches to, the
+  part after it is the AWS region it is created in (validated to look like
+  one). Each entry carries a `traffic_dial_percentage` (default `100`),
   health check settings, and a list of `endpoint_configurations` (an
   `endpoint_id`, a `weight`, and `client_ip_preservation_enabled`). At least
   one entry required, and at least one group across the map must have a
@@ -59,16 +61,24 @@ reason `aws.modules.vpc`'s subnet tiers and `aws.modules.acm`'s
 `route53_zones` are maps: a list index is not a stable identity. Two
 consequences follow directly from that choice:
 
-- **`endpoint_groups` is keyed by region because the region already is the
-  identity.** Global Accelerator allows exactly one endpoint group per
-  listener per region, so the region is not incidental data next to some
-  other key — it is the only key that means anything. Making it the map key
-  instead of a nested `region` field means a caller cannot declare two groups
-  for the same region by accident (the map literal itself would collide), and
-  `endpoint_group_region = each.key` in `endpoint_groups.tf` cannot drift from
-  what the key says.
-- **`listeners` is keyed by a caller-chosen logical name, and
-  `endpoint_groups[*].listener_key` references that name**, rather than
+- **`endpoint_groups` is keyed `"<listener_key>/<region>"` because that pair
+  is the identity.** Global Accelerator allows exactly one endpoint group per
+  listener per region — not one per region for the whole accelerator. Making
+  the pair the map key means a caller cannot declare two groups for the same
+  listener and region by accident (the map literal itself would collide),
+  while two different listeners can each have a group in the same region.
+  Both halves are split from the key once in `locals.endpoint_groups`, so
+  `listener_arn` and `endpoint_group_region` in `endpoint_groups.tf` cannot
+  drift from what the key says. Listener keys may not contain `/`, so the
+  split is unambiguous.
+
+  v1.0.0 keyed this map by region alone, with `listener_key` as a field. That
+  shape allowed at most one endpoint group per region for the whole
+  accelerator, so two listeners could never both steer into the same region —
+  contradicting the `M×N` composition below. v2.0.0 replaced it; see
+  CHANGELOG.md for the upgrade.
+- **`listeners` is keyed by a caller-chosen logical name, and the listener
+  half of each `endpoint_groups` key references that name**, rather than
   either structure nesting the other. A listener commonly fans out to every
   region (the ADR's shape: one listener, two regional endpoint groups), so
   nesting endpoint groups under listeners would force a caller to repeat
@@ -76,12 +86,13 @@ consequences follow directly from that choice:
   would force identical listeners per region. A flat cross-reference by key
   lets `M` listeners and `N` regions compose freely as `M` listener resources
   and up to `M×N` endpoint groups, with each endpoint group naming exactly the
-  one listener it belongs to.
+  one listener it belongs to. The `tests/wiring.tftest.hcl` fixture proves
+  it with a TCP and a UDP listener that both have a group in `us-east-1`.
 
 The reference by key is a plain string, not a resource reference, so it is
 knowable at plan time — but it is also therefore not validated by Terraform's
 own type system the way a direct reference would be. A caller can type a
-`listener_key` that names no listener. Section "Cross-variable validation"
+listener key that names no listener. Section "Cross-variable validation"
 below explains how the module still catches that at plan time.
 
 ## Cross-variable validation
@@ -93,15 +104,15 @@ that needs only one variable's own data — region-key shape, port range
 bounds, weight and traffic-dial bounds, at least one non-zero dial — is
 therefore a `validation` block on that variable in `variables.tf`.
 
-The one rule that inherently crosses variables — every
-`endpoint_groups[*].listener_key` must name a key in `listeners` — cannot be
+The one rule that inherently crosses variables — the listener half of every
+`endpoint_groups` key must name a key in `listeners` — cannot be
 expressed that way. It is instead a `precondition` on
 `aws_globalaccelerator_accelerator.this` in `accelerator.tf`, evaluated from
 `local.unknown_listener_keys` in `locals.tf`. Attaching it to the accelerator
 resource rather than to the endpoint group it concerns follows
 `aws.modules.acm`'s precedent (`certificate.tf`'s preconditions cover rules
 that belong to `validation.tf`'s records too): one precondition collects and
-names every unresolved `listener_key` in one message, rather than failing on
+names every unresolved listener key in one message, rather than failing on
 whichever `for_each` key Terraform's own "Invalid index" error happens to
 reach first.
 
@@ -113,8 +124,9 @@ reach first.
 - `aws_globalaccelerator_listener.this` — one per `listeners` entry, with a
   `dynamic "port_range"` block per `port_ranges` entry.
 - `aws_globalaccelerator_endpoint_group.this` — one per `endpoint_groups`
-  entry, its `listener_arn` resolved from `listener_key` through
-  `aws_globalaccelerator_listener.this[each.value.listener_key].arn`, with a
+  entry, its `listener_arn` resolved from the key's listener half through
+  `aws_globalaccelerator_listener.this[each.value.listener_key].arn` and its
+  region from the key's region half, with a
   `dynamic "endpoint_configuration"` block per `endpoint_configurations`
   entry.
 

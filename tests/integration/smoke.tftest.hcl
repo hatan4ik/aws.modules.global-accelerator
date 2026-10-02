@@ -42,8 +42,7 @@ run "smoke" {
     }
 
     endpoint_groups = {
-      (run.setup.region) = {
-        listener_key = "primary"
+      "primary/${run.setup.region}" = {
         endpoint_configurations = [
           { endpoint_id = run.setup.allocation_id },
         ]
@@ -89,7 +88,7 @@ run "smoke" {
   }
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this[run.setup.region].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this[run.setup.region].health_check_protocol == "TCP"
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/${run.setup.region}"].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this["primary/${run.setup.region}"].health_check_protocol == "TCP"
     error_message = "The real API must accept the endpoint group defaults: fully dialed, TCP health check."
   }
 }

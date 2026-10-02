@@ -14,8 +14,7 @@ variables {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "primary"
+    "primary/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
       ]
@@ -45,14 +44,12 @@ run "stops_warning_once_a_second_region_is_present" {
   variables {
     flow_logs = { bucket_name = "ga-flow-logs-example" }
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key = "primary"
+      "primary/us-east-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
         ]
       }
-      "eu-west-1" = {
-        listener_key = "primary"
+      "primary/eu-west-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
         ]
@@ -61,4 +58,37 @@ run "stops_warning_once_a_second_region_is_present" {
   }
 
   # Neither check should fire: flow logs are declared and two regions are present.
+}
+
+run "still_warns_when_two_listeners_share_one_region" {
+  command = plan
+
+  # Two endpoint groups, but both in us-east-1: the check counts distinct
+  # regions, not endpoint_groups entries, so this is still single-region.
+  variables {
+    flow_logs = { bucket_name = "ga-flow-logs-example" }
+    listeners = {
+      primary = {
+        port_ranges = [{ from_port = 443, to_port = 443 }]
+      }
+      secondary = {
+        protocol    = "UDP"
+        port_ranges = [{ from_port = 51820, to_port = 51820 }]
+      }
+    }
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+      "secondary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/secondary/60dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+
+  expect_failures = [check.single_region_endpoint_groups]
 }

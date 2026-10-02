@@ -21,7 +21,7 @@ resource "aws_globalaccelerator_accelerator" "this" {
   tags = local.tags
 
   lifecycle {
-    # This is a cross-variable rule (endpoint_groups against listeners), which
+    # This is a cross-variable rule (endpoint_groups keys against listeners), which
     # a variable validation block cannot express under Terraform 1.7: a
     # variable's own validation may only reference that variable. Attaching it
     # here, rather than to the endpoint group it concerns, gives one place
@@ -29,7 +29,7 @@ resource "aws_globalaccelerator_accelerator" "this" {
     # for_each key Terraform's own "Invalid index" error reaches first.
     precondition {
       condition     = length(local.unknown_listener_keys) == 0
-      error_message = "Every endpoint_groups[*].listener_key must reference a key in listeners. Unknown listener_key value(s): ${join(", ", local.unknown_listener_keys)}."
+      error_message = "Every endpoint_groups key must start with a key in listeners (\"<listener_key>/<region>\"). Unknown listener key(s): ${join(", ", local.unknown_listener_keys)}."
     }
   }
 }
