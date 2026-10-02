@@ -11,6 +11,6 @@ variable "name" {
 }
 
 variable "endpoint_id" {
-  description = "ARN or Elastic IP allocation ID of the single endpoint to accelerate, such as an existing ALB's ARN."
+  description = "ALB/NLB ARN (in region), Elastic IP allocation ID, or EC2 instance ID of the single endpoint to accelerate, such as an existing ALB's ARN."
   type        = string
 }

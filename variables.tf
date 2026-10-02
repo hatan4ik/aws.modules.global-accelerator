@@ -108,7 +108,7 @@ variable "listeners" {
 # ---------------------------------------------------------------------------
 
 variable "endpoint_groups" {
-  description = "Endpoint groups keyed by \"<listener_key>/<region>\", for example \"api/us-east-1\": the part before the slash must name an entry in listeners and the part after it is the AWS region the group is created in. This mirrors the Global Accelerator rule of one endpoint group per (listener, region) pair, so M listeners and N regions compose into up to M x N groups. traffic_dial_percentage (default 100) is the share of listener traffic steered to this group; at least one group across the map must be non-zero, since an accelerator whose groups are all dialed to zero serves no traffic. health_check_port defaults to the listener's port when left null. endpoint_configurations lists the endpoints in the group: endpoint_id is an ALB/NLB ARN or an Elastic IP allocation ID, weight (default 128) shares traffic within the group, and client_ip_preservation_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint."
+  description = "Endpoint groups keyed by \"<listener_key>/<region>\", for example \"api/us-east-1\": the part before the slash must name an entry in listeners and the part after it is the AWS region the group is created in. This mirrors the Global Accelerator rule of one endpoint group per (listener, region) pair, so M listeners and N regions compose into up to M x N groups. traffic_dial_percentage (default 100) is the share of listener traffic steered to this group; at least one group across the map must be non-zero, since an accelerator whose groups are all dialed to zero serves no traffic. health_check_port defaults to the listener's port when left null. endpoint_configurations lists the endpoints in the group: endpoint_id is an ALB/NLB ARN in the group's region, an Elastic IP allocation ID (eipalloc-...), or an EC2 instance ID (i-...), validated by shape at plan time; weight (default 128) shares traffic within the group, and client_ip_preservation_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint."
   type = map(object({
     traffic_dial_percentage       = optional(number, 100)
     health_check_port             = optional(number)
@@ -169,13 +169,33 @@ variable "endpoint_groups" {
     error_message = "Every endpoint group must declare at least one entry in endpoint_configurations."
   }
 
+  # The three endpoint ID shapes Global Accelerator accepts in an endpoint
+  # group: an ALB or NLB ARN (any partition), an Elastic IP allocation ID, or
+  # an EC2 instance ID (8 or 17 hex characters after the prefix). A target
+  # group ARN, a load balancer name, or a Gateway Load Balancer ARN fails here
+  # at plan rather than at apply.
   validation {
     condition = alltrue(flatten([
       for group in values(var.endpoint_groups) : [
-        for endpoint in group.endpoint_configurations : length(trimspace(endpoint.endpoint_id)) > 0
+        for endpoint in group.endpoint_configurations :
+        can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/(app|net)/[A-Za-z0-9-]{1,32}/[0-9a-f]+$", endpoint.endpoint_id)) ||
+        can(regex("^eipalloc-([0-9a-f]{8}|[0-9a-f]{17})$", endpoint.endpoint_id)) ||
+        can(regex("^i-([0-9a-f]{8}|[0-9a-f]{17})$", endpoint.endpoint_id))
       ]
     ]))
-    error_message = "Every endpoint_configurations entry's endpoint_id must be a non-empty ALB/NLB ARN or Elastic IP allocation ID."
+    error_message = "Every endpoint_configurations entry's endpoint_id must be an ALB or NLB ARN (arn:<partition>:elasticloadbalancing:<region>:<account>:loadbalancer/app|net/<name>/<id>), an Elastic IP allocation ID (eipalloc-<8 or 17 hex>), or an EC2 instance ID (i-<8 or 17 hex>)."
+  }
+
+  # An endpoint group only accepts load balancers in its own region. Compared
+  # against the region half of the group's key; non-ARN IDs carry no region.
+  validation {
+    condition = alltrue(flatten([
+      for key, group in var.endpoint_groups : [
+        for endpoint in group.endpoint_configurations :
+        !startswith(endpoint.endpoint_id, "arn:") || try(split(":", endpoint.endpoint_id)[3] == split("/", key)[1], false)
+      ]
+    ]))
+    error_message = "Every load balancer ARN in endpoint_configurations must be in the same region as its endpoint group (the region half of the \"<listener_key>/<region>\" key)."
   }
 
   validation {

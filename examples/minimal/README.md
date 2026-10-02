@@ -20,7 +20,7 @@ terraform plan \
   -var endpoint_id=arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/example/50dc6c495c0c9188
 ```
 
-`endpoint_id` is an existing ALB or NLB ARN, or an Elastic IP allocation ID; the module does not create it.
+`endpoint_id` is an existing ALB or NLB ARN in `region`, an Elastic IP allocation ID, or an EC2 instance ID; the module does not create it, but rejects a malformed ID at plan time.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

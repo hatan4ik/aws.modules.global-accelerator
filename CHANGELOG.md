@@ -17,6 +17,8 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 
 - **Every listener must now be able to serve traffic** (a per-listener `precondition` on `aws_globalaccelerator_listener.this`). v1.0.0 only required one non-zero `traffic_dial_percentage` anywhere in the map, so a listener with every group dialed to 0%, a listener whose only dialed groups hold weight-0 endpoints, or a listener with no endpoint group at all passed the plan and silently routed nowhere. Each now fails the plan naming the listener. Zero-dialed or zero-weighted standby groups beside a serving group are unaffected.
 
+- **`endpoint_id` is now validated by shape**, not just for non-emptiness: it must be an ALB or NLB ARN (any partition), an Elastic IP allocation ID (`eipalloc-` plus 8 or 17 hex characters), or an EC2 instance ID (`i-` plus 8 or 17 hex characters), and a load balancer ARN must be in the same region as its endpoint group. v1.0.0's README claimed every input was validated, but a load balancer name, a target group ARN, a Gateway Load Balancer ARN, or a cross-region ARN passed the plan and failed only at apply. A value that previously applied successfully is a real, correctly shaped ID and still passes.
+
 ### Upgrading from v1.0.0
 
 1. Rewrite every `endpoint_groups` entry: move `listener_key` into the map key and delete the attribute.
@@ -55,6 +57,7 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 
 - `tests/wiring.tftest.hcl` now attaches a TCP listener and a UDP listener to endpoint groups in the same region (`primary/us-east-1` and `secondary/us-east-1`) and proves each resolves to its own listener ARN: the case the v1.0.0 key made unrepresentable.
 - Validation tests for the per-listener serving precondition: all groups dialed to zero on one listener while another serves, a dialed group with only weight-0 endpoints, weighted endpoints only in a zero-dialed group, and a listener with no endpoint group.
+- Validation tests for endpoint ID shape: a bare name, a target group ARN, a Gateway Load Balancer ARN, a truncated allocation ID, a malformed instance ID, and a load balancer ARN from another region are rejected; every supported shape (ALB, NLB, `aws-us-gov` partition, both allocation-ID and instance-ID lengths) is accepted.
 - Validation tests rejecting a region-only (v1.0.0-shaped) key, a key with an empty listener half, and a listener key containing `/`; a check test proving two listeners in one region still trigger `single_region_endpoint_groups`.
 
 ## [1.0.0] - 2026-09-27

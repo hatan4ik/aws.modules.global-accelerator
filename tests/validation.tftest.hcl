@@ -379,6 +379,119 @@ run "rejects_a_blank_endpoint_id" {
   expect_failures = [var.endpoint_groups]
 }
 
+run "rejects_an_endpoint_id_that_is_not_an_arn_or_resource_id" {
+  command = plan
+  variables {
+    # A typo or a load balancer name instead of its ARN.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "alb-primary" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_target_group_arn_as_an_endpoint_id" {
+  command = plan
+  variables {
+    # A target group ARN is a common mix-up for the load balancer's own ARN.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/primary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_gateway_load_balancer_arn" {
+  command = plan
+  variables {
+    # Global Accelerator accepts ALBs and NLBs, not Gateway Load Balancers.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/gwy/primary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_truncated_elastic_ip_allocation_id" {
+  command = plan
+  variables {
+    # Allocation IDs are eipalloc- followed by 8 or 17 hex characters.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "eipalloc-12ab" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_malformed_instance_id" {
+  command = plan
+  variables {
+    # Instance IDs are i- followed by 8 or 17 hex characters.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "i-XYZ12345" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "rejects_a_load_balancer_arn_from_another_region" {
+  command = plan
+  variables {
+    # The ARN is in eu-west-1 but the group is created in us-east-1; AWS would reject it at apply.
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
+        ]
+      }
+    }
+  }
+  expect_failures = [var.endpoint_groups]
+}
+
+run "accepts_every_supported_endpoint_id_shape" {
+  command = plan
+  variables {
+    endpoint_groups = {
+      "primary/us-east-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" },
+          { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/primary-nlb/60dc6c495c0c9188" },
+          { endpoint_id = "eipalloc-0123456789abcdef0" },
+          { endpoint_id = "eipalloc-12345678" },
+          { endpoint_id = "i-0123456789abcdef0" },
+          { endpoint_id = "i-12345678" },
+        ]
+      }
+      "primary/us-gov-west-1" = {
+        endpoint_configurations = [
+          { endpoint_id = "arn:aws-us-gov:elasticloadbalancing:us-gov-west-1:123456789012:loadbalancer/app/gov/50dc6c495c0c9188" },
+        ]
+      }
+    }
+  }
+}
+
 run "rejects_a_weight_above_255" {
   command = plan
   variables {

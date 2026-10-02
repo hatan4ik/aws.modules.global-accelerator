@@ -17,7 +17,8 @@ two regional public ALBs... Anycast API ingress and ALB health endpoints
 provide predictable regional steering." The module creates the accelerator,
 its listeners, and its endpoint groups; it does **not** create, know about, or
 import `aws.modules.alb`. Every endpoint is a plain string the caller
-supplies — an ALB or NLB ARN, or an Elastic IP allocation ID — the same
+supplies — an ALB or NLB ARN, an Elastic IP allocation ID, or an EC2 instance
+ID, each checked by shape at plan time — the same
 "external dependency is an identifier the caller passes in" pattern as every
 bring-your-own-resource input in this series (compare `aws.modules.acm`'s
 `certificate_authority_arn`, or `aws.modules.route53`'s zone IDs). This keeps
