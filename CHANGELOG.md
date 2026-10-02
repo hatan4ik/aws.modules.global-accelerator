@@ -19,6 +19,10 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 
 - **`endpoint_id` is now validated by shape**, not just for non-emptiness: it must be an ALB or NLB ARN (any partition), an Elastic IP allocation ID (`eipalloc-` plus 8 or 17 hex characters), or an EC2 instance ID (`i-` plus 8 or 17 hex characters), and a load balancer ARN must be in the same region as its endpoint group. v1.0.0's README claimed every input was validated, but a load balancer name, a target group ARN, a Gateway Load Balancer ARN, or a cross-region ARN passed the plan and failed only at apply. A value that previously applied successfully is a real, correctly shaped ID and still passes.
 
+### Fixed
+
+- Health-check settings are no longer silently inert for load balancer endpoints. The `endpoint_groups` description, README, and DESIGN now state that `health_check_*` and `threshold_count` apply only to Elastic IP and EC2 instance endpoints, and that for ALB/NLB endpoints Global Accelerator ignores them in favour of the load balancer's target-group health. Two new advisory `check` blocks (warn, never block): `health_check_settings_ignored_for_load_balancer_endpoints` (a group whose endpoints are all load balancers sets any health-check argument away from its default) and `health_check_path_requires_http_protocol` (`health_check_path` set with a `TCP` health check).
+
 ### Upgrading from v1.0.0
 
 1. Rewrite every `endpoint_groups` entry: move `listener_key` into the map key and delete the attribute.
@@ -58,6 +62,7 @@ Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" b
 - `tests/wiring.tftest.hcl` now attaches a TCP listener and a UDP listener to endpoint groups in the same region (`primary/us-east-1` and `secondary/us-east-1`) and proves each resolves to its own listener ARN: the case the v1.0.0 key made unrepresentable.
 - Validation tests for the per-listener serving precondition: all groups dialed to zero on one listener while another serves, a dialed group with only weight-0 endpoints, weighted endpoints only in a zero-dialed group, and a listener with no endpoint group.
 - Validation tests for endpoint ID shape: a bare name, a target group ARN, a Gateway Load Balancer ARN, a truncated allocation ID, a malformed instance ID, and a load balancer ARN from another region are rejected; every supported shape (ALB, NLB, `aws-us-gov` partition, both allocation-ID and instance-ID lengths) is accepted.
+- Check tests for both new health-check advisories, including a negative case (settings on an Elastic IP endpoint group do not warn).
 - Validation tests rejecting a region-only (v1.0.0-shaped) key, a key with an empty listener half, and a listener key containing `/`; a check test proving two listeners in one region still trigger `single_region_endpoint_groups`.
 
 ## [1.0.0] - 2026-09-27

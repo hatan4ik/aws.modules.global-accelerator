@@ -43,6 +43,29 @@ locals {
     ])
   ])
 
+  # Endpoint groups whose endpoints are all load balancers (ARNs) yet which
+  # set any health-check argument away from its default. Global Accelerator
+  # ignores endpoint-group health-check settings for ALB and NLB endpoints and
+  # uses the load balancer's own target-group health instead, so these
+  # settings do nothing; the advisory check in checks.tf names the groups.
+  health_check_ignored_groups = sort([
+    for key, group in var.endpoint_groups : key
+    if alltrue([for endpoint in group.endpoint_configurations : startswith(endpoint.endpoint_id, "arn:")]) && (
+      group.health_check_path != null ||
+      group.health_check_port != null ||
+      group.health_check_protocol != "TCP" ||
+      group.health_check_interval_seconds != 30 ||
+      group.threshold_count != 3
+    )
+  ])
+
+  # Endpoint groups that set a health_check_path while health_check_protocol
+  # is TCP: a path only means anything to an HTTP or HTTPS health check.
+  health_check_path_on_tcp_groups = sort([
+    for key, group in var.endpoint_groups : key
+    if group.health_check_path != null && group.health_check_protocol == "TCP"
+  ])
+
   # The anycast IP addresses AWS assigned, flattened out of the accelerator's
   # ip_sets blocks (one per IP address family) into the single sorted list the
   # output promises.

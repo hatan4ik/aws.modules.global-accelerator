@@ -145,6 +145,22 @@ serving one remain valid.
   `dynamic "endpoint_configuration"` block per `endpoint_configurations`
   entry.
 
+## Health checks: when they apply
+
+Endpoint-group health-check settings (`health_check_port`,
+`health_check_protocol`, `health_check_path`, `health_check_interval_seconds`,
+`threshold_count`) only apply to Elastic IP and EC2 instance endpoints. For ALB
+and NLB endpoints, Global Accelerator ignores them and uses the load
+balancer's own target-group health. Since ALBs are this module's primary use
+case (ADR 0004), silently accepting the settings would mislead: a caller could
+tune a health check that never runs. The module keeps the inputs (they are
+real for EIP and instance endpoints), documents the rule in the variable
+description and README, and adds two advisory checks rather than validations,
+because neither state is harmful — it is just inert:
+`health_check_settings_ignored_for_load_balancer_endpoints` (a group of only
+load balancer ARNs with any health-check argument off its default) and
+`health_check_path_requires_http_protocol` (a path with a TCP health check).
+
 ## Security defaults
 
 - Flow logs are off until a caller supplies a bucket they own; the
@@ -166,7 +182,7 @@ serving one remain valid.
   weight/traffic-dial boundaries (0 and 255, a zero-dialed group beside a
   non-zero one); `tests/validation.tftest.hcl` covers every validation and the
   cross-variable precondition with a failing case; `tests/checks.tftest.hcl`
-  covers both advisory checks on and off.
+  covers every advisory check on and off.
 - `listener_arn` and every module output are cross-resource references,
   unknown under `command = plan` regardless of provider. They are proven
   under `command = apply` in `tests/wiring.tftest.hcl`, isolated in its own

@@ -11,7 +11,7 @@ What you get from `name`, one listener, and one endpoint group, without setting 
 - Every documented Global Accelerator bound enforced before you apply: port ranges 1-65535 with `from_port <= to_port`, weights 0-255, traffic-dial percentages 0-100, every listener able to serve traffic (at least one of its endpoint groups dialed above zero with at least one endpoint weighted above zero), health-check intervals restricted to the 10 or 30 seconds the API actually accepts, and a region key that looks like a real AWS region.
 - Endpoints stay bring-your-own. `endpoint_id` is a plain ARN, allocation ID, or instance ID string; the module never creates or reads the resource behind it (it only checks the string's shape at plan time), so it fits in front of an `aws.modules.alb` pair, a hand-written NLB, or a pair of Elastic IPs equally.
 - Flow logs and client IP preservation default to what most callers want without being silently on: flow logs are off until you name a bucket you own (an advisory check reminds you), and `client_ip_preservation_enabled` defaults to `true` so origins see the real client IP.
-- Two advisory checks that never block: one for flow logs left off, one for fewer than two regions in `endpoint_groups` (ADR 0004's shape is two regional ALBs; a single-region accelerator is valid, for example mid-rollout, but usually is not the intended end state).
+- Four advisory checks that never block: one for flow logs left off, one for fewer than two distinct regions in `endpoint_groups` (ADR 0004's shape is two regional ALBs; a single-region accelerator is valid, for example mid-rollout, but usually is not the intended end state), one for health-check settings that AWS will ignore because every endpoint in the group is a load balancer, and one for a `health_check_path` paired with a TCP health check.
 
 ## Quick start
 
@@ -68,7 +68,7 @@ root (one accelerator)
 ├── listeners.tf         aws_globalaccelerator_listener.this[<listener key>]: dynamic "port_range"
 ├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this["<listener_key>/<region>"]: listener_arn and region from the key; dynamic "endpoint_configuration"
 ├── locals.tf            Tag merging, flow-log presence, endpoint-group key parsing, the unresolved-listener-key set, ip_sets flattening
-├── checks.tf             flow_logs_disabled, single_region_endpoint_groups (both advisory)
+├── checks.tf             flow_logs_disabled, single_region_endpoint_groups, health_check_settings_ignored_for_load_balancer_endpoints, health_check_path_requires_http_protocol (all advisory)
 └── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_sets, listener_arns
 ```
 
@@ -90,6 +90,11 @@ Traffic and endpoints
 - `client_ip_preservation_enabled` defaults to `true` so an ALB, WAF, or application-level rate limit at the origin still sees the real client IP rather than the accelerator's; set it to `false` per endpoint only when the origin cannot handle preserved IPs.
 - Every listener must be able to serve traffic: at least one of its endpoint groups must have a `traffic_dial_percentage` above zero **and** at least one endpoint in that group with a `weight` above zero. A listener with no endpoint group, with every group dialed to zero, or whose dialed groups hold only weight-0 endpoints would plan and apply successfully while routing nowhere, which is far more likely to be a mistake than a deliberate state, so a per-listener `precondition` rejects it at plan time and names the listener. Zero-dialed or zero-weighted groups are fine beside a serving one (for example a standby region). To stop a listener on purpose, remove it; to stop everything, set `enabled = false`.
 
+Health checks
+
+- **`health_check_*` and `threshold_count` only take effect for Elastic IP and EC2 instance endpoints.** For ALB and NLB endpoints — the ADR 0004 shape and this platform's use case — Global Accelerator ignores the endpoint group's health-check settings and instead treats an endpoint as healthy or unhealthy according to the load balancer's own target-group health checks. Configure health on the ALB/NLB target groups (for example through `aws.modules.alb`), not here. The module still validates these inputs (they matter for EIP and instance endpoints), and the advisory `health_check_settings_ignored_for_load_balancer_endpoints` check warns, naming the groups, when a group whose endpoints are all load balancers sets any of them away from the defaults.
+- `health_check_path` is only used by an `HTTP` or `HTTPS` health check. With the default `TCP` protocol it does nothing; the advisory `health_check_path_requires_http_protocol` check warns when the two are combined.
+
 Observability
 
 - `flow_logs` is `null` (off) by default; turning it on costs nothing but an S3 bucket you already own, and the `flow_logs_disabled` check reminds you on every plan while it is off.
@@ -109,7 +114,7 @@ Not created here
 - Listeners and endpoint groups are `for_each` over `listeners` and `endpoint_groups` respectively, keyed by the caller's own map keys (`aws_globalaccelerator_endpoint_group.this["api/us-east-1"]`). Adding a listener or an endpoint group adds exactly one resource instance; removing one removes exactly that instance. Neither resource type is taggable in the Global Accelerator API, so only the accelerator carries `tags`.
 - Flow logs are added or removed by changing `flow_logs` between `null` and a value: the `dynamic "attributes"` block in `accelerator.tf` renders only when `flow_logs` is set, so there is nothing to toggle beyond the one input.
 - Health-check settings and `traffic_dial_percentage` are ordinary arguments on `aws_globalaccelerator_endpoint_group`; AWS applies changes to a running endpoint group in place.
-- Two `check` blocks warn without blocking: `flow_logs_disabled`, `single_region_endpoint_groups`.
+- Four `check` blocks warn without blocking: `flow_logs_disabled`, `single_region_endpoint_groups`, `health_check_settings_ignored_for_load_balancer_endpoints`, `health_check_path_requires_http_protocol`.
 
 ## Testing
 
