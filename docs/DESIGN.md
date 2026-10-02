@@ -197,6 +197,17 @@ load balancer ARNs with any health-check argument off its default) and
   automatically; `tests/integration/README.md` says so explicitly and the
   `integration` workflow stays dispatch-only.
 
+## Quotas
+
+The `M×N` composition is bounded by Global Accelerator's default service
+quotas: 10 listeners per accelerator, 10 port ranges per listener, and 10
+endpoints per endpoint group, plus the fixed API rule of one endpoint group
+per listener per region (which the `"<listener_key>/<region>"` key enforces by
+construction). The first three are account-level defaults that can differ per
+account, so the module documents them (README, "Compatibility and scope")
+rather than validating them: hard-coding 10 would reject a caller whose quota
+has been raised.
+
 ## Compatibility
 
 - Terraform `>= 1.7.0, < 2.0.0`. AWS provider `>= 6.35.0, < 7.0.0`.

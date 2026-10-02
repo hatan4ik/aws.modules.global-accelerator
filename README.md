@@ -137,6 +137,14 @@ The full rationale, including why `listeners` and `endpoint_groups` are keyed ma
 
 - Terraform `>= 1.7.0, < 2.0.0`. AWS provider `>= 6.35.0, < 7.0.0`.
 - `ip_address_type` accepts `IPV4` and `DUAL_STACK`; the module exposes the accelerator-level setting and does not yet add dual-stack-specific listener inputs, since ADR 0004 specifies IPv4 ALBs. Extending this is additive and non-breaking.
+- AWS service quotas bound how far `M` listeners × `N` regions can grow. The module does not enforce them, because they are per-account defaults (look up your account's current values in Service Quotas, under AWS Global Accelerator); a call that exceeds one plans cleanly and fails at apply:
+
+  | Quota | Default | Where it bites in this module |
+  | --- | --- | --- |
+  | Listeners per accelerator | 10 | entries in `listeners` |
+  | Port ranges per listener | 10 | entries in each listener's `port_ranges` |
+  | Endpoints per endpoint group | 10 | entries in each group's `endpoint_configurations` |
+  | Endpoint groups per listener per region | 1 (fixed by the API) | enforced by construction: one `"<listener_key>/<region>"` map key per pair |
 - Nothing in the v2 interface is scheduled to change. Additions arrive as optional inputs and outputs.
 
 ## Versioning and releases
