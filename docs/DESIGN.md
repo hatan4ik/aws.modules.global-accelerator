@@ -50,8 +50,9 @@ with `aws.modules.route53`.
   one). Each entry carries a `traffic_dial_percentage` (default `100`),
   health check settings, and a list of `endpoint_configurations` (an
   `endpoint_id`, a `weight`, and `client_ip_preservation_enabled`). At least
-  one entry required, and at least one group across the map must have a
-  non-zero `traffic_dial_percentage`.
+  one entry required, and every listener must have at least one group with a
+  non-zero `traffic_dial_percentage` holding at least one non-zero-weight
+  endpoint.
 - `tags`, applied to the accelerator. Listeners and endpoint groups are not
   taggable resources in the Global Accelerator API.
 
@@ -219,5 +220,10 @@ has been raised.
 
 ## Migration
 
-None. This is a new module with no prior release; there is no
-`docs/UPGRADE-1.0.md` because there is nothing to migrate from.
+v1.0.0 to v2.0.0 is a breaking change: `endpoint_groups` keys move from
+`"<region>"` to `"<listener_key>/<region>"` (the `listener_key` attribute is
+removed), and the `ip_sets` output is replaced by `ip_addresses`. Existing
+endpoint groups must be re-addressed with `moved` blocks in the calling root
+module, or Terraform plans a destroy and recreate of every group. The full
+procedure, with an example `moved` block, is in CHANGELOG.md under
+"Upgrading from v1.0.0".
