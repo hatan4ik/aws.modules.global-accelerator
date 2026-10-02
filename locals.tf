@@ -66,10 +66,17 @@ locals {
     if group.health_check_path != null && group.health_check_protocol == "TCP"
   ])
 
-  # The anycast IP addresses AWS assigned, flattened out of the accelerator's
-  # ip_sets blocks (one per IP address family) into the single sorted list the
-  # output promises.
-  ip_addresses = sort(flatten([
+  # The anycast IP addresses AWS assigned, gathered out of the accelerator's
+  # ip_sets blocks and split by family so a DUAL_STACK accelerator's IPv4 and
+  # IPv6 addresses stay distinguishable. The family is read from the address
+  # itself (IPv6 literals contain ":"), not from ip_sets[*].ip_family, so the
+  # split does not depend on how the API spells the family name.
+  all_ip_addresses = flatten([
     for ip_set in aws_globalaccelerator_accelerator.this.ip_sets : ip_set.ip_addresses
-  ]))
+  ])
+
+  ip_addresses = {
+    ipv4 = sort([for ip in local.all_ip_addresses : ip if !strcontains(ip, ":")])
+    ipv6 = sort([for ip in local.all_ip_addresses : ip if strcontains(ip, ":")])
+  }
 }

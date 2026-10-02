@@ -67,9 +67,9 @@ root (one accelerator)
 ├── accelerator.tf      aws_globalaccelerator_accelerator.this: dynamic "attributes" for flow_logs; the cross-variable listener-key precondition
 ├── listeners.tf         aws_globalaccelerator_listener.this[<listener key>]: dynamic "port_range"
 ├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this["<listener_key>/<region>"]: listener_arn and region from the key; dynamic "endpoint_configuration"
-├── locals.tf            Tag merging, flow-log presence, endpoint-group key parsing, the unresolved-listener-key set, ip_sets flattening
+├── locals.tf            Tag merging, flow-log presence, endpoint-group key parsing, the unresolved-listener-key set, the serving-listener set, health-check advisories, IP addresses split by family
 ├── checks.tf             flow_logs_disabled, single_region_endpoint_groups, health_check_settings_ignored_for_load_balancer_endpoints, health_check_path_requires_http_protocol (all advisory)
-└── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_sets, listener_arns
+└── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_addresses { ipv4, ipv6 }, listener_arns
 ```
 
 `listeners` and `endpoint_groups` are independent maps joined by the `endpoint_groups` key, not nested structures: `locals.endpoint_groups` splits each `"<listener_key>/<region>"` key once, an endpoint group's `listener_arn` is `aws_globalaccelerator_listener.this[<listener_key>].arn`, and `endpoint_group_region` is the region half, so neither can drift from what the map key says. A listener key that names no `listeners` entry is caught before Terraform ever tries that lookup: `locals.unknown_listener_keys` collects every such value and a `precondition` on the accelerator resource fails the plan naming all of them. See [docs/DESIGN.md](docs/DESIGN.md) for why this needs a precondition rather than a variable validation under Terraform 1.7.

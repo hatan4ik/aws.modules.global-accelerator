@@ -68,8 +68,8 @@ run "smoke" {
   }
 
   assert {
-    condition     = length(output.ip_sets) > 0 && alltrue([for ip in output.ip_sets : can(cidrhost("${ip}/32", 0))])
-    error_message = "ip_sets must list at least one real anycast IPv4 address."
+    condition     = length(output.ip_addresses.ipv4) > 0 && alltrue([for ip in output.ip_addresses.ipv4 : can(cidrhost("${ip}/32", 0))]) && length(output.ip_addresses.ipv6) == 0
+    error_message = "ip_addresses.ipv4 must list at least one real anycast IPv4 address, and ip_addresses.ipv6 must be empty for an IPV4 accelerator."
   }
 
   assert {

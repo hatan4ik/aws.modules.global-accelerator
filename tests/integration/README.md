@@ -37,7 +37,7 @@ references a real ALB, NLB, or production IP.
 
 | Suite | What it proves | Needs | Typical time |
 | --- | --- | --- | --- |
-| `smoke.tftest.hcl` | One accelerator, one listener, and one endpoint group with a real endpoint are accepted by the API; the documented outputs (`accelerator_arn`, `accelerator_dns_name`, `accelerator_hosted_zone_id`, `ip_sets`, `listener_arns`) resolve to real values; the defaults (IPV4, enabled, TCP listener, `NONE` affinity, fully dialed, TCP health check) survive the real API. | credentials, region | several minutes, dominated by accelerator provisioning and teardown |
+| `smoke.tftest.hcl` | One accelerator, one listener, and one endpoint group with a real endpoint are accepted by the API; the documented outputs (`accelerator_arn`, `accelerator_dns_name`, `accelerator_hosted_zone_id`, `ip_addresses` (IPv4 populated, IPv6 empty), `listener_arns`) resolve to real values; the defaults (IPV4, enabled, TCP listener, `NONE` affinity, fully dialed, TCP health check) survive the real API. | credentials, region | several minutes, dominated by accelerator provisioning and teardown |
 
 ## Run it in your account
 

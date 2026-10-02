@@ -13,8 +13,8 @@ output "accelerator_hosted_zone_id" {
   value       = aws_globalaccelerator_accelerator.this.hosted_zone_id
 }
 
-output "ip_sets" {
-  description = "Static anycast IP addresses AWS assigned to the accelerator, sorted. Useful for allow-listing at an origin firewall in front of the endpoints, if one exists."
+output "ip_addresses" {
+  description = "Static anycast IP addresses AWS assigned to the accelerator, split by family: { ipv4 = [...], ipv6 = [...] }, each list sorted. ipv6 is empty unless ip_address_type is DUAL_STACK. Useful for allow-listing at an origin firewall in front of the endpoints, if one exists."
   value       = local.ip_addresses
 }
 

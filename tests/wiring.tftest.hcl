@@ -52,8 +52,11 @@ override_resource {
     arn            = "arn:aws:globalaccelerator::123456789012:accelerator/1234abcd-1234-abcd-1234-abcd1234abcd"
     dns_name       = "a1234567890abcdef.awsglobalaccelerator.com"
     hosted_zone_id = "Z2BJ6XQ5FK7U4H"
+    # A DUAL_STACK-shaped response: IPv4 and IPv6 sets, deliberately out of
+    # order, so the output must both sort and keep the two families apart.
     ip_sets = [
       { ip_addresses = ["5.6.7.8"], ip_family = "IPv4" },
+      { ip_addresses = ["2600:9000:a000::2", "2600:9000:a000::1"], ip_family = "IPv6" },
       { ip_addresses = ["1.2.3.4"], ip_family = "IPv4" },
     ]
   }
@@ -131,8 +134,13 @@ run "reports_the_documented_outputs" {
   }
 
   assert {
-    condition     = tolist(output.ip_sets) == tolist(["1.2.3.4", "5.6.7.8"])
-    error_message = "ip_sets must flatten every ip_addresses entry across the accelerator's ip_sets blocks into one sorted list of strings."
+    condition     = tolist(output.ip_addresses.ipv4) == tolist(["1.2.3.4", "5.6.7.8"])
+    error_message = "ip_addresses.ipv4 must hold every IPv4 anycast address across the accelerator's ip_sets blocks, sorted, and nothing else."
+  }
+
+  assert {
+    condition     = tolist(output.ip_addresses.ipv6) == tolist(["2600:9000:a000::1", "2600:9000:a000::2"])
+    error_message = "ip_addresses.ipv6 must hold every IPv6 anycast address, sorted, kept apart from the IPv4 ones."
   }
 
   assert {

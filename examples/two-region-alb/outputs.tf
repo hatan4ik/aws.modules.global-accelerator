@@ -13,9 +13,9 @@ output "accelerator_hosted_zone_id" {
   value       = module.global_accelerator.accelerator_hosted_zone_id
 }
 
-output "ip_sets" {
-  description = "Static anycast IP addresses AWS assigned."
-  value       = module.global_accelerator.ip_sets
+output "ip_addresses" {
+  description = "Static anycast IP addresses AWS assigned, split into ipv4 and ipv6 lists."
+  value       = module.global_accelerator.ip_addresses
 }
 
 output "listener_arns" {
