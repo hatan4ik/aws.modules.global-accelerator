@@ -15,14 +15,12 @@ variables {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "primary"
+    "primary/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/primary/50dc6c495c0c9188" }
       ]
     }
-    "eu-west-1" = {
-      listener_key = "primary"
+    "primary/eu-west-1" = {
       endpoint_configurations = [
         { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/secondary/50dc6c495c0c9188" }
       ]
@@ -85,17 +83,17 @@ run "creates_the_declared_listener_with_secure_defaults" {
   }
 }
 
-run "creates_one_endpoint_group_per_region_with_secure_defaults" {
+run "creates_one_endpoint_group_per_listener_and_region_with_secure_defaults" {
   command = plan
 
   assert {
-    condition     = length(aws_globalaccelerator_endpoint_group.this) == 2 && contains(keys(aws_globalaccelerator_endpoint_group.this), "us-east-1") && contains(keys(aws_globalaccelerator_endpoint_group.this), "eu-west-1")
-    error_message = "One endpoint group per declared region must be planned, keyed by region."
+    condition     = length(aws_globalaccelerator_endpoint_group.this) == 2 && contains(keys(aws_globalaccelerator_endpoint_group.this), "primary/us-east-1") && contains(keys(aws_globalaccelerator_endpoint_group.this), "primary/eu-west-1")
+    error_message = "One endpoint group per declared (listener, region) pair must be planned, keyed \"<listener_key>/<region>\"."
   }
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this["us-east-1"].endpoint_group_region == "us-east-1" && aws_globalaccelerator_endpoint_group.this["eu-west-1"].endpoint_group_region == "eu-west-1"
-    error_message = "Each endpoint group's region must equal its map key."
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].endpoint_group_region == "us-east-1" && aws_globalaccelerator_endpoint_group.this["primary/eu-west-1"].endpoint_group_region == "eu-west-1"
+    error_message = "Each endpoint group's region must equal the region half of its map key."
   }
 
   # listener_arn is a cross-resource reference and is unknown under
@@ -103,7 +101,7 @@ run "creates_one_endpoint_group_per_region_with_secure_defaults" {
   # command = apply in tests/wiring.tftest.hcl instead.
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this["us-east-1"].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this["us-east-1"].health_check_protocol == "TCP" && aws_globalaccelerator_endpoint_group.this["us-east-1"].health_check_interval_seconds == 30 && aws_globalaccelerator_endpoint_group.this["us-east-1"].threshold_count == 3
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].traffic_dial_percentage == 100 && aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].health_check_protocol == "TCP" && aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].health_check_interval_seconds == 30 && aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].threshold_count == 3
     error_message = "An endpoint group with no health check settings declared must use the documented defaults."
   }
 
@@ -115,7 +113,7 @@ run "creates_one_endpoint_group_per_region_with_secure_defaults" {
   assert {
     # endpoint_configuration is a set-typed nested block: no addressable
     # index, so its single element is matched with a for expression.
-    condition     = length(aws_globalaccelerator_endpoint_group.this["us-east-1"].endpoint_configuration) == 1 && anytrue([for endpoint in aws_globalaccelerator_endpoint_group.this["us-east-1"].endpoint_configuration : endpoint.weight == 128 && endpoint.client_ip_preservation_enabled == true])
+    condition     = length(aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].endpoint_configuration) == 1 && anytrue([for endpoint in aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].endpoint_configuration : endpoint.weight == 128 && endpoint.client_ip_preservation_enabled == true])
     error_message = "An endpoint with no weight or client IP preservation declared must default to weight 128 and preservation enabled."
   }
 }
@@ -125,15 +123,13 @@ run "accepts_boundary_weights_and_a_zero_dialed_group" {
 
   variables {
     endpoint_groups = {
-      "us-east-1" = {
-        listener_key            = "primary"
+      "primary/us-east-1" = {
         traffic_dial_percentage = 0
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/standby/50dc6c495c0c9188", weight = 0 },
         ]
       }
-      "eu-west-1" = {
-        listener_key = "primary"
+      "primary/eu-west-1" = {
         endpoint_configurations = [
           { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/active-a/50dc6c495c0c9188", weight = 0 },
           { endpoint_id = "arn:aws:elasticloadbalancing:eu-west-1:123456789012:loadbalancer/app/active-b/50dc6c495c0c9188", weight = 255 },
@@ -143,14 +139,14 @@ run "accepts_boundary_weights_and_a_zero_dialed_group" {
   }
 
   assert {
-    condition     = aws_globalaccelerator_endpoint_group.this["us-east-1"].traffic_dial_percentage == 0 && aws_globalaccelerator_endpoint_group.this["eu-west-1"].traffic_dial_percentage == 100
+    condition     = aws_globalaccelerator_endpoint_group.this["primary/us-east-1"].traffic_dial_percentage == 0 && aws_globalaccelerator_endpoint_group.this["primary/eu-west-1"].traffic_dial_percentage == 100
     error_message = "A group dialed to zero is valid as long as another group in the same accelerator is non-zero."
   }
 
   assert {
     # A set has no guaranteed order, so the two weights are compared as a set
     # rather than a positional list.
-    condition     = toset([for endpoint in aws_globalaccelerator_endpoint_group.this["eu-west-1"].endpoint_configuration : endpoint.weight]) == toset([0, 255])
+    condition     = toset([for endpoint in aws_globalaccelerator_endpoint_group.this["primary/eu-west-1"].endpoint_configuration : endpoint.weight]) == toset([0, 255])
     error_message = "Weights 0 and 255, the Global Accelerator bounds, must render exactly as declared."
   }
 }

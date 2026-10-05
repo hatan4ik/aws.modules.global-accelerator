@@ -1,23 +1,23 @@
 # aws.modules.global-accelerator
 
-Provisions one AWS Global Accelerator per module call: the accelerator, its listeners, and the endpoint groups that steer each listener's traffic into one or more AWS regions. This is the anycast ingress layer ADR 0004 (Separate static edge delivery, dynamic API acceleration, and conditional egress inspection) assigns to dynamic API traffic — Global Accelerator to regional public ALBs, with predictable regional steering from anycast IP addresses and ALB health endpoints. The module takes plain ARN or allocation-ID strings for its endpoints; it does not create or know about `aws.modules.alb` specifically, so it stays usable in front of anything Global Accelerator supports (an ALB, an NLB, or an Elastic IP) rather than hard-coupled to one sibling module. It is secure by default and explicit by declaration, creates nothing beyond the accelerator, its listeners, and its endpoint groups, and performs no data-source reads. Requires Terraform >= 1.7 and the AWS provider >= 6.35, < 7.
+Provisions one AWS Global Accelerator per module call: the accelerator, its listeners, and the endpoint groups that steer each listener's traffic into one or more AWS regions. This is the anycast ingress layer ADR 0004 (Separate static edge delivery, dynamic API acceleration, and conditional egress inspection) assigns to dynamic API traffic — Global Accelerator to regional public ALBs, with predictable regional steering from anycast IP addresses and ALB health endpoints. The module takes plain ARN or allocation-ID strings for its endpoints; it does not create or know about `aws.modules.alb` specifically, so it stays usable in front of anything Global Accelerator supports (an ALB, an NLB, an Elastic IP, or an EC2 instance) rather than hard-coupled to one sibling module. It is secure by default and explicit by declaration, creates nothing beyond the accelerator, its listeners, and its endpoint groups, and performs no data-source reads. Requires Terraform >= 1.7 and the AWS provider >= 6.35, < 7.
 
 ## Why this module
 
 What you get from `name`, one listener, and one endpoint group, without setting anything else:
 
-- One cross-reference, not nested structures. `listeners` and `endpoint_groups` are both maps — `listeners` keyed by a short logical name you choose, `endpoint_groups` keyed by the AWS region it runs in, since Global Accelerator allows exactly one endpoint group per listener per region and the region already is the identity. An endpoint group names the `listener_key` it attaches to, so `M` listeners and `N` regions compose freely instead of forcing you to repeat identical endpoint groups per listener or identical listeners per region.
-- A plan-time check that a typo does not become a confusing apply-time error. `endpoint_groups[*].listener_key` must name a key in `listeners`; a value that does not fails the plan with every unresolved key named in one message, not Terraform's own "Invalid index" error on whichever key it reaches first.
-- Every documented Global Accelerator bound enforced before you apply: port ranges 1-65535 with `from_port <= to_port`, weights 0-255, traffic-dial percentages 0-100 with at least one group across the map non-zero (an accelerator whose groups are all dialed to zero serves no traffic), health-check intervals restricted to the 10 or 30 seconds the API actually accepts, and a region key that looks like a real AWS region.
-- Endpoints stay bring-your-own. `endpoint_id` is a plain ARN or allocation ID string; the module never creates, reads, or assumes the shape of the resource behind it, so it fits in front of an `aws.modules.alb` pair, a hand-written NLB, or a pair of Elastic IPs equally.
+- One cross-reference, not nested structures. `listeners` and `endpoint_groups` are both maps — `listeners` keyed by a short logical name you choose, `endpoint_groups` keyed `"<listener_key>/<region>"` (for example `"api/us-east-1"`), since Global Accelerator allows exactly one endpoint group per listener per region and that pair is the endpoint group's identity. `M` listeners and `N` regions compose freely into up to `M×N` endpoint groups — a TCP listener and a UDP listener can each have their own group in the same region — without repeating identical endpoint groups per listener or identical listeners per region.
+- A plan-time check that a typo does not become a confusing apply-time error. The listener half of every `endpoint_groups` key must name a key in `listeners`; one that does not fails the plan with every unresolved key named in one message, not Terraform's own "Invalid index" error on whichever key it reaches first.
+- Every documented Global Accelerator bound enforced before you apply: port ranges 1-65535 with `from_port <= to_port`, weights 0-255, traffic-dial percentages 0-100, every listener able to serve traffic (at least one of its endpoint groups dialed above zero with at least one endpoint weighted above zero), health-check intervals restricted to the 10 or 30 seconds the API actually accepts, and a region key that looks like a real AWS region.
+- Endpoints stay bring-your-own. `endpoint_id` is a plain ARN, allocation ID, or instance ID string; the module never creates or reads the resource behind it (it only checks the string's shape at plan time), so it fits in front of an `aws.modules.alb` pair, a hand-written NLB, or a pair of Elastic IPs equally.
 - Flow logs and client IP preservation default to what most callers want without being silently on: flow logs are off until you name a bucket you own (an advisory check reminds you), and `client_ip_preservation_enabled` defaults to `true` so origins see the real client IP.
-- Two advisory checks that never block: one for flow logs left off, one for fewer than two regions in `endpoint_groups` (ADR 0004's shape is two regional ALBs; a single-region accelerator is valid, for example mid-rollout, but usually is not the intended end state).
+- Four advisory checks that never block: one for flow logs left off, one for fewer than two distinct regions in `endpoint_groups` (ADR 0004's shape is two regional ALBs; a single-region accelerator is valid, for example mid-rollout, but usually is not the intended end state), one for health-check settings that AWS will ignore because every endpoint in the group is a load balancer, and one for a `health_check_path` paired with a TCP health check.
 
 ## Quick start
 
 ```hcl
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 
   name = "public-api"
 
@@ -30,14 +30,12 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    "us-east-1" = {
-      listener_key = "api"
+    "api/us-east-1" = {
       endpoint_configurations = [
         { endpoint_id = module.alb_us_east_1.arn },
       ]
     }
-    "eu-west-1" = {
-      listener_key = "api"
+    "api/eu-west-1" = {
       endpoint_configurations = [
         { endpoint_id = module.alb_eu_west_1.arn },
       ]
@@ -68,14 +66,13 @@ This creates one accelerator with one TCP/443 listener and two regional endpoint
 root (one accelerator)
 ├── accelerator.tf      aws_globalaccelerator_accelerator.this: dynamic "attributes" for flow_logs; the cross-variable listener-key precondition
 ├── listeners.tf         aws_globalaccelerator_listener.this[<listener key>]: dynamic "port_range"
-├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this[<region>]: listener_arn resolved by listener_key; dynamic "endpoint_configuration"
-├── locals.tf            Tag merging, flow-log presence, the unresolved-listener-key set, ip_sets flattening
-├── checks.tf             flow_logs_disabled, single_region_endpoint_groups (both advisory)
-└── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_sets, listener_arns
+├── endpoint_groups.tf    aws_globalaccelerator_endpoint_group.this["<listener_key>/<region>"]: listener_arn and region from the key; dynamic "endpoint_configuration"
+├── locals.tf            Tag merging, flow-log presence, endpoint-group key parsing, the unresolved-listener-key set, the serving-listener set, health-check advisories, IP addresses split by family
+├── checks.tf             flow_logs_disabled, single_region_endpoint_groups, health_check_settings_ignored_for_load_balancer_endpoints, health_check_path_requires_http_protocol (all advisory)
+└── outputs.tf            accelerator_arn/dns_name/hosted_zone_id, ip_addresses { ipv4, ipv6 }, listener_arns
 ```
 
-`listeners` and `endpoint_groups` are independent maps joined by `listener_key`, not nested structures: an endpoint group's `listener_arn` is
-`aws_globalaccelerator_listener.this[each.value.listener_key].arn`, and `endpoint_group_region` is always `each.key`, so a region cannot drift from what its own map key says. A `listener_key` that names no `listeners` entry is caught before Terraform ever tries that lookup: `locals.unknown_listener_keys` collects every such value and a `precondition` on the accelerator resource fails the plan naming all of them. See [docs/DESIGN.md](docs/DESIGN.md) for why this needs a precondition rather than a variable validation under Terraform 1.7.
+`listeners` and `endpoint_groups` are independent maps joined by the `endpoint_groups` key, not nested structures: `locals.endpoint_groups` splits each `"<listener_key>/<region>"` key once, an endpoint group's `listener_arn` is `aws_globalaccelerator_listener.this[<listener_key>].arn`, and `endpoint_group_region` is the region half, so neither can drift from what the map key says. A listener key that names no `listeners` entry is caught before Terraform ever tries that lookup: `locals.unknown_listener_keys` collects every such value and a `precondition` on the accelerator resource fails the plan naming all of them. See [docs/DESIGN.md](docs/DESIGN.md) for why this needs a precondition rather than a variable validation under Terraform 1.7.
 
 ## Usage patterns
 
@@ -89,9 +86,14 @@ root (one accelerator)
 
 Traffic and endpoints
 
-- `endpoint_id` is a plain string the caller supplies (an ALB/NLB ARN or an Elastic IP allocation ID); the module never creates or inspects the resource behind it, so the security posture of the endpoint itself (its own listener protocol, WAF, security groups) is entirely the caller's, exactly as `aws.modules.acm`'s `certificate_authority_arn` and `aws.modules.route53`'s zone IDs treat their externally owned inputs.
+- `endpoint_id` is a plain string the caller supplies (an ALB/NLB ARN, an Elastic IP allocation ID, or an EC2 instance ID); the module never creates or inspects the resource behind it, so the security posture of the endpoint itself (its own listener protocol, WAF, security groups) is entirely the caller's, exactly as `aws.modules.acm`'s `certificate_authority_arn` and `aws.modules.route53`'s zone IDs treat their externally owned inputs.
 - `client_ip_preservation_enabled` defaults to `true` so an ALB, WAF, or application-level rate limit at the origin still sees the real client IP rather than the accelerator's; set it to `false` per endpoint only when the origin cannot handle preserved IPs.
-- `traffic_dial_percentage` must be non-zero on at least one group across the whole map: an accelerator every one of whose groups is dialed to zero would plan and apply successfully while serving no traffic at all, which is far more likely to be a mistake than a deliberate state, so the module rejects it at plan time.
+- Every listener must be able to serve traffic: at least one of its endpoint groups must have a `traffic_dial_percentage` above zero **and** at least one endpoint in that group with a `weight` above zero. A listener with no endpoint group, with every group dialed to zero, or whose dialed groups hold only weight-0 endpoints would plan and apply successfully while routing nowhere, which is far more likely to be a mistake than a deliberate state, so a per-listener `precondition` rejects it at plan time and names the listener. Zero-dialed or zero-weighted groups are fine beside a serving one (for example a standby region). To stop a listener on purpose, remove it; to stop everything, set `enabled = false`.
+
+Health checks
+
+- **`health_check_*` and `threshold_count` only take effect for Elastic IP and EC2 instance endpoints.** For ALB and NLB endpoints — the ADR 0004 shape and this platform's use case — Global Accelerator ignores the endpoint group's health-check settings and instead treats an endpoint as healthy or unhealthy according to the load balancer's own target-group health checks. Configure health on the ALB/NLB target groups (for example through `aws.modules.alb`), not here. The module still validates these inputs (they matter for EIP and instance endpoints), and the advisory `health_check_settings_ignored_for_load_balancer_endpoints` check warns, naming the groups, when a group whose endpoints are all load balancers sets any of them away from the defaults.
+- `health_check_path` is only used by an `HTTP` or `HTTPS` health check. With the default `TCP` protocol it does nothing; the advisory `health_check_path_requires_http_protocol` check warns when the two are combined.
 
 Observability
 
@@ -100,8 +102,8 @@ Observability
 
 Validation
 
-- Every input is validated at plan time: `name` and `ip_address_type` shape, `flow_logs.bucket_name`/`.prefix` shape, listener protocol (`TCP`/`UDP`), client affinity (`NONE`/`SOURCE_IP`), port ranges (1-65535, `from_port <= to_port`), endpoint-group region-key shape, traffic-dial bounds (0-100), health-check protocol (`TCP`/`HTTP`/`HTTPS`), health-check port (1-65535), health-check interval (10 or 30 seconds — the only values Global Accelerator health checks accept), threshold count (1-10), and endpoint weight (0-255, the Global Accelerator bound) and a non-empty endpoint ID.
-- The one rule that spans both `listeners` and `endpoint_groups` — every `listener_key` must resolve — is a `precondition` on the accelerator resource, not a variable validation, because Terraform 1.7 variable validations may only reference their own variable. See [docs/DESIGN.md](docs/DESIGN.md).
+- Every input is validated at plan time: `name` and `ip_address_type` shape, `flow_logs.bucket_name`/`.prefix` shape, listener protocol (`TCP`/`UDP`), client affinity (`NONE`/`SOURCE_IP`), port ranges (1-65535, `from_port <= to_port`), endpoint-group region-key shape, traffic-dial bounds (0-100), health-check protocol (`TCP`/`HTTP`/`HTTPS`), health-check port (1-65535), health-check interval (10 or 30 seconds — the only values Global Accelerator health checks accept), threshold count (1-10), endpoint weight (0-255, the Global Accelerator bound), and endpoint ID shape: an ALB or NLB ARN (`arn:<partition>:elasticloadbalancing:<region>:<account>:loadbalancer/app|net/<name>/<id>`) whose region matches its group's region, an Elastic IP allocation ID (`eipalloc-` plus 8 or 17 hex characters), or an EC2 instance ID (`i-` plus 8 or 17 hex characters). A load balancer name, a target group ARN, a Gateway Load Balancer ARN, or a typo'd ID fails the plan instead of the apply. IDs that are unknown until apply (for example an ALB created in the same plan) are checked by AWS at apply, as Terraform skips validation of unknown values.
+- The one rule that spans both `listeners` and `endpoint_groups` — the listener half of every `endpoint_groups` key must resolve — is a `precondition` on the accelerator resource, not a variable validation, because Terraform 1.7 variable validations may only reference their own variable. See [docs/DESIGN.md](docs/DESIGN.md).
 
 Not created here
 
@@ -109,10 +111,10 @@ Not created here
 
 ## Lifecycle notes
 
-- Listeners and endpoint groups are `for_each` over `listeners` and `endpoint_groups` respectively, keyed by the caller's own map keys. Adding a listener or an endpoint group adds exactly one resource instance; removing one removes exactly that instance. Neither resource type is taggable in the Global Accelerator API, so only the accelerator carries `tags`.
+- Listeners and endpoint groups are `for_each` over `listeners` and `endpoint_groups` respectively, keyed by the caller's own map keys (`aws_globalaccelerator_endpoint_group.this["api/us-east-1"]`). Adding a listener or an endpoint group adds exactly one resource instance; removing one removes exactly that instance. Neither resource type is taggable in the Global Accelerator API, so only the accelerator carries `tags`.
 - Flow logs are added or removed by changing `flow_logs` between `null` and a value: the `dynamic "attributes"` block in `accelerator.tf` renders only when `flow_logs` is set, so there is nothing to toggle beyond the one input.
 - Health-check settings and `traffic_dial_percentage` are ordinary arguments on `aws_globalaccelerator_endpoint_group`; AWS applies changes to a running endpoint group in place.
-- Two `check` blocks warn without blocking: `flow_logs_disabled`, `single_region_endpoint_groups`.
+- Four `check` blocks warn without blocking: `flow_logs_disabled`, `single_region_endpoint_groups`, `health_check_settings_ignored_for_load_balancer_endpoints`, `health_check_path_requires_http_protocol`.
 
 ## Testing
 
@@ -125,8 +127,8 @@ Two layers, deliberately separate:
 
 - Single responsibility. The module owns one accelerator, its listeners, and its endpoint groups, nothing else. Concerns are split by file: `accelerator.tf`, `listeners.tf`, `endpoint_groups.tf`, `locals.tf`, `checks.tf`.
 - Open/closed. New behaviour arrives as data: another entry in `listeners` or `endpoint_groups`, another `endpoint_configurations` entry. No existing behaviour needs the module edited to add a listener, a region, or an endpoint.
-- Liskov substitution. Every `endpoint_id` is treated identically regardless of what kind of resource it names (an ALB ARN, an NLB ARN, an EIP allocation ID); the module renders the same `endpoint_configuration` block for all of them.
-- Interface segregation. `listeners` entries read only listener concerns (protocol, ports, affinity); `endpoint_groups` entries read only endpoint-group concerns (region, dial percentage, health check, endpoints). Neither needs to know about the other beyond the one `listener_key` cross-reference.
+- Liskov substitution. Every `endpoint_id` is treated identically regardless of what kind of resource it names (an ALB ARN, an NLB ARN, an EIP allocation ID, an instance ID); the module renders the same `endpoint_configuration` block for all of them.
+- Interface segregation. `listeners` entries read only listener concerns (protocol, ports, affinity); `endpoint_groups` entries read only endpoint-group concerns (region, dial percentage, health check, endpoints). Neither needs to know about the other beyond the listener half of the `endpoint_groups` key.
 - Dependency inversion. The module depends on identifiers (a listener key, an endpoint ARN or allocation ID, a bucket name), never on how they were produced, and performs no data-source reads.
 
 The full rationale, including why `listeners` and `endpoint_groups` are keyed maps rather than lists and why the listener-key check is a precondition rather than a variable validation, is in [docs/DESIGN.md](docs/DESIGN.md).
@@ -135,7 +137,15 @@ The full rationale, including why `listeners` and `endpoint_groups` are keyed ma
 
 - Terraform `>= 1.7.0, < 2.0.0`. AWS provider `>= 6.35.0, < 7.0.0`.
 - `ip_address_type` accepts `IPV4` and `DUAL_STACK`; the module exposes the accelerator-level setting and does not yet add dual-stack-specific listener inputs, since ADR 0004 specifies IPv4 ALBs. Extending this is additive and non-breaking.
-- Nothing in the v1 interface is scheduled to change. Additions arrive as optional inputs and outputs.
+- AWS service quotas bound how far `M` listeners × `N` regions can grow. The module does not enforce them, because they are per-account defaults (look up your account's current values in Service Quotas, under AWS Global Accelerator); a call that exceeds one plans cleanly and fails at apply:
+
+  | Quota | Default | Where it bites in this module |
+  | --- | --- | --- |
+  | Listeners per accelerator | 10 | entries in `listeners` |
+  | Port ranges per listener | 10 | entries in each listener's `port_ranges` |
+  | Endpoints per endpoint group | 10 | entries in each group's `endpoint_configurations` |
+  | Endpoint groups per listener per region | 1 (fixed by the API) | enforced by construction: one `"<listener_key>/<region>"` map key per pair |
+- Nothing in the v2 interface is scheduled to change. Additions arrive as optional inputs and outputs.
 
 ## Versioning and releases
 
@@ -145,7 +155,7 @@ Pin the full commit SHA of the release tag and record the tag in a comment, so t
 
 ```hcl
 module "global_accelerator" {
-  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v1.0.0
+  source = "git::https://github.com/hatan4ik/aws.modules.global-accelerator.git?ref=<commit-sha>" # v2.0.0
 }
 ```
 
@@ -201,10 +211,10 @@ No modules.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_enabled"></a> [enabled](#input\_enabled) | Whether the accelerator routes traffic. Setting this to false stops traffic at the static IP addresses without deleting the accelerator, its listeners, or its endpoint groups. | `bool` | `true` | no |
-| <a name="input_endpoint_groups"></a> [endpoint\_groups](#input\_endpoint\_groups) | Endpoint groups keyed by the AWS region they are created in, for example "us-east-1" (the key itself is the region). listener\_key must name an entry in listeners. traffic\_dial\_percentage (default 100) is the share of listener traffic steered to this group; at least one group across the map must be non-zero, since an accelerator whose groups are all dialed to zero serves no traffic. health\_check\_port defaults to the listener's port when left null. endpoint\_configurations lists the endpoints in the group: endpoint\_id is an ALB/NLB ARN or an Elastic IP allocation ID, weight (default 128) shares traffic within the group, and client\_ip\_preservation\_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint. | <pre>map(object({<br/>    listener_key                  = string<br/>    traffic_dial_percentage       = optional(number, 100)<br/>    health_check_port             = optional(number)<br/>    health_check_protocol         = optional(string, "TCP")<br/>    health_check_path             = optional(string)<br/>    health_check_interval_seconds = optional(number, 30)<br/>    threshold_count               = optional(number, 3)<br/>    endpoint_configurations = list(object({<br/>      endpoint_id                    = string<br/>      weight                         = optional(number, 128)<br/>      client_ip_preservation_enabled = optional(bool, true)<br/>    }))<br/>  }))</pre> | n/a | yes |
+| <a name="input_endpoint_groups"></a> [endpoint\_groups](#input\_endpoint\_groups) | Endpoint groups keyed by "<listener\_key>/<region>", for example "api/us-east-1": the part before the slash must name an entry in listeners and the part after it is the AWS region the group is created in. This mirrors the Global Accelerator rule of one endpoint group per (listener, region) pair, so M listeners and N regions compose into up to M x N groups. traffic\_dial\_percentage (default 100) is the share of listener traffic steered to this group; every listener must have at least one group dialed above zero that contains at least one endpoint with a non-zero weight, since a listener without one routes nowhere (zero-dialed standby groups beside a serving one are fine). Health checks: health\_check\_port (defaults to the listener's port when null), health\_check\_protocol, health\_check\_path, health\_check\_interval\_seconds, and threshold\_count take effect ONLY for Elastic IP and EC2 instance endpoints. For ALB and NLB endpoints, Global Accelerator ignores them and uses the load balancer's own target-group health checks, so configure health there; an advisory check warns when a group of only load balancers sets them away from their defaults. health\_check\_path is only used when health\_check\_protocol is HTTP or HTTPS (a second advisory check warns when it is paired with TCP). endpoint\_configurations lists the endpoints in the group: endpoint\_id is an ALB/NLB ARN in the group's region, an Elastic IP allocation ID (eipalloc-...), or an EC2 instance ID (i-...), validated by shape at plan time; weight (default 128) shares traffic within the group, and client\_ip\_preservation\_enabled (default true) preserves the client's source IP to the endpoint where the endpoint type supports it. At least one entry is required, and every group needs at least one endpoint. | <pre>map(object({<br/>    traffic_dial_percentage       = optional(number, 100)<br/>    health_check_port             = optional(number)<br/>    health_check_protocol         = optional(string, "TCP")<br/>    health_check_path             = optional(string)<br/>    health_check_interval_seconds = optional(number, 30)<br/>    threshold_count               = optional(number, 3)<br/>    endpoint_configurations = list(object({<br/>      endpoint_id                    = string<br/>      weight                         = optional(number, 128)<br/>      client_ip_preservation_enabled = optional(bool, true)<br/>    }))<br/>  }))</pre> | n/a | yes |
 | <a name="input_flow_logs"></a> [flow\_logs](#input\_flow\_logs) | Flow log destination. bucket\_name is an existing S3 bucket the caller owns and creates (the same ownership boundary as aws.modules.alb's access\_logs and aws.modules.cloudfront's logging); prefix is an optional key prefix within it. null (the default) disables flow logs; a check block advises turning them on. | <pre>object({<br/>    bucket_name = string<br/>    prefix      = optional(string)<br/>  })</pre> | `null` | no |
 | <a name="input_ip_address_type"></a> [ip\_address\_type](#input\_ip\_address\_type) | IP address type of the accelerator's static anycast IP addresses: IPV4 or DUAL\_STACK. | `string` | `"IPV4"` | no |
-| <a name="input_listeners"></a> [listeners](#input\_listeners) | Listeners keyed by a short logical name, referenced by endpoint\_groups[*].listener\_key. protocol defaults to TCP; port\_ranges is one or more inclusive port ranges the listener accepts; client\_affinity defaults to NONE (SOURCE\_IP pins a client to one endpoint for the accelerator's stickiness window). At least one entry is required. | <pre>map(object({<br/>    protocol = optional(string, "TCP")<br/>    port_ranges = list(object({<br/>      from_port = number<br/>      to_port   = number<br/>    }))<br/>    client_affinity = optional(string, "NONE")<br/>  }))</pre> | n/a | yes |
+| <a name="input_listeners"></a> [listeners](#input\_listeners) | Listeners keyed by a short logical name (no "/"), referenced by the listener half of each endpoint\_groups key. protocol defaults to TCP; port\_ranges is one or more inclusive port ranges the listener accepts; client\_affinity defaults to NONE (SOURCE\_IP pins a client to one endpoint for the accelerator's stickiness window). At least one entry is required. | <pre>map(object({<br/>    protocol = optional(string, "TCP")<br/>    port_ranges = list(object({<br/>      from_port = number<br/>      to_port   = number<br/>    }))<br/>    client_affinity = optional(string, "NONE")<br/>  }))</pre> | n/a | yes |
 | <a name="input_name"></a> [name](#input\_name) | Name of the accelerator, unique within the account and Region. | `string` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to the accelerator. Listeners and endpoint groups are not taggable resources in the Global Accelerator API. The module adds a Name tag equal to name unless you set one; caller tags are never overridden. | `map(string)` | `{}` | no |
 
@@ -215,6 +225,6 @@ No modules.
 | <a name="output_accelerator_arn"></a> [accelerator\_arn](#output\_accelerator\_arn) | ARN of the accelerator. |
 | <a name="output_accelerator_dns_name"></a> [accelerator\_dns\_name](#output\_accelerator\_dns\_name) | DNS name AWS assigns to the accelerator's static anycast IP addresses. |
 | <a name="output_accelerator_hosted_zone_id"></a> [accelerator\_hosted\_zone\_id](#output\_accelerator\_hosted\_zone\_id) | Route 53 hosted zone ID to use when aliasing a Route 53 record to accelerator\_dns\_name (see aws.modules.route53). |
-| <a name="output_ip_sets"></a> [ip\_sets](#output\_ip\_sets) | Static anycast IP addresses AWS assigned to the accelerator, sorted. Useful for allow-listing at an origin firewall in front of the endpoints, if one exists. |
+| <a name="output_ip_addresses"></a> [ip\_addresses](#output\_ip\_addresses) | Static anycast IP addresses AWS assigned to the accelerator, split by family: { ipv4 = [...], ipv6 = [...] }, each list sorted. ipv6 is empty unless ip\_address\_type is DUAL\_STACK. Useful for allow-listing at an origin firewall in front of the endpoints, if one exists. |
 | <a name="output_listener_arns"></a> [listener\_arns](#output\_listener\_arns) | ARN of each listener, keyed the same as the listeners input. |
 <!-- END_TF_DOCS -->

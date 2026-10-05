@@ -6,6 +6,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+Breaking release: the next version is **v2.0.0**. Read "Upgrading from v1.0.0" before bumping the pinned SHA.
+
+### Changed (BREAKING)
+
+- **`endpoint_groups` is now keyed `"<listener_key>/<region>"`, and the `listener_key` attribute is removed.** v1.0.0 keyed the map by region alone, which allowed at most one endpoint group per region for the whole accelerator: a TCP listener and a UDP listener could never both have an endpoint group in the same region, contradicting the documented `M` listeners × `N` regions composition. Global Accelerator's actual rule is one endpoint group per (listener, region) pair, and the key now says exactly that. Both halves are parsed from the key, so neither the listener nor the region can drift from it. A region-only key (the v1.0.0 shape) now fails the plan with a validation error rather than being reinterpreted.
+- `listeners` keys may no longer contain `/`, which separates the two halves of an `endpoint_groups` key.
+- `aws_globalaccelerator_endpoint_group.this` instances are now addressed by the composite key (`this["api/us-east-1"]` instead of `this["us-east-1"]`).
+- The advisory `single_region_endpoint_groups` check now counts distinct regions rather than `endpoint_groups` entries, so two listeners sharing one region still count as one region. It remains advisory.
+
+- **Every listener must now be able to serve traffic** (a per-listener `precondition` on `aws_globalaccelerator_listener.this`). v1.0.0 only required one non-zero `traffic_dial_percentage` anywhere in the map, so a listener with every group dialed to 0%, a listener whose only dialed groups hold weight-0 endpoints, or a listener with no endpoint group at all passed the plan and silently routed nowhere. Each now fails the plan naming the listener. Zero-dialed or zero-weighted standby groups beside a serving group are unaffected.
+
+- **`endpoint_id` is now validated by shape**, not just for non-emptiness: it must be an ALB or NLB ARN (any partition), an Elastic IP allocation ID (`eipalloc-` plus 8 or 17 hex characters), or an EC2 instance ID (`i-` plus 8 or 17 hex characters), and a load balancer ARN must be in the same region as its endpoint group. v1.0.0's README claimed every input was validated, but a load balancer name, a target group ARN, a Gateway Load Balancer ARN, or a cross-region ARN passed the plan and failed only at apply. A value that previously applied successfully is a real, correctly shaped ID and still passes.
+
+- **Output `ip_sets` is replaced by `ip_addresses`, an object `{ ipv4 = [...], ipv6 = [...] }`** with each list sorted. `ip_sets` was a single flat, sorted list of strings despite its name, so a `DUAL_STACK` accelerator's IPv4 and IPv6 addresses were mixed together with no way to tell them apart. `ipv6` is empty for an `IPV4` accelerator. No consumer in the platform repository reads this output yet. Upgrade: replace `module.<name>.ip_sets` with `module.<name>.ip_addresses.ipv4` (identical contents for an `IPV4` accelerator), or concatenate both lists if you really want every address.
+
+### Fixed
+
+- Health-check settings are no longer silently inert for load balancer endpoints. The `endpoint_groups` description, README, and DESIGN now state that `health_check_*` and `threshold_count` apply only to Elastic IP and EC2 instance endpoints, and that for ALB/NLB endpoints Global Accelerator ignores them in favour of the load balancer's target-group health. Two new advisory `check` blocks (warn, never block): `health_check_settings_ignored_for_load_balancer_endpoints` (a group whose endpoints are all load balancers sets any health-check argument away from its default) and `health_check_path_requires_http_protocol` (`health_check_path` set with a `TCP` health check).
+
+### Upgrading from v1.0.0
+
+1. Rewrite every `endpoint_groups` entry: move `listener_key` into the map key and delete the attribute.
+
+   ```hcl
+   # v1.0.0
+   endpoint_groups = {
+     "us-east-1" = {
+       listener_key            = "api"
+       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
+     }
+   }
+
+   # v2.0.0
+   endpoint_groups = {
+     "api/us-east-1" = {
+       endpoint_configurations = [{ endpoint_id = module.alb_us_east_1.arn }]
+     }
+   }
+   ```
+
+2. In the **same change**, add one `moved` block per existing endpoint group in the calling root module, so Terraform re-addresses the existing groups instead of destroying and recreating them. Without it, the plan destroys each endpoint group and creates a new one for the same listener and region, which drops traffic to that region for the duration and can fail outright, since AWS allows only one group per listener and region.
+
+   ```hcl
+   moved {
+     from = module.global_accelerator.aws_globalaccelerator_endpoint_group.this["us-east-1"]
+     to   = module.global_accelerator.aws_globalaccelerator_endpoint_group.this["api/us-east-1"]
+   }
+   ```
+
+   (`terraform state mv` with the same two addresses is the alternative where `moved` blocks are not wanted.)
+
+3. Plan and confirm the endpoint groups show only `has moved to` lines with no `destroy` or `create` for any `aws_globalaccelerator_endpoint_group`, then apply. The `moved` blocks can be deleted after every state that used v1.0.0 has applied them.
+
+### Added
+
+- `tests/wiring.tftest.hcl` now attaches a TCP listener and a UDP listener to endpoint groups in the same region (`primary/us-east-1` and `secondary/us-east-1`) and proves each resolves to its own listener ARN: the case the v1.0.0 key made unrepresentable.
+- Validation tests for the per-listener serving precondition: all groups dialed to zero on one listener while another serves, a dialed group with only weight-0 endpoints, weighted endpoints only in a zero-dialed group, and a listener with no endpoint group.
+- Validation tests for endpoint ID shape: a bare name, a target group ARN, a Gateway Load Balancer ARN, a truncated allocation ID, a malformed instance ID, and a load balancer ARN from another region are rejected; every supported shape (ALB, NLB, `aws-us-gov` partition, both allocation-ID and instance-ID lengths) is accepted.
+- README and DESIGN document the default AWS quotas the design is bounded by: 10 listeners per accelerator, 10 port ranges per listener, 10 endpoints per endpoint group, and the fixed one endpoint group per listener per region. They are documented rather than validated because the first three are per-account defaults.
+- Check tests for both new health-check advisories, including a negative case (settings on an Elastic IP endpoint group do not warn).
+- Validation tests rejecting a region-only (v1.0.0-shaped) key, a key with an empty listener half, and a listener key containing `/`; a check test proving two listeners in one region still trigger `single_region_endpoint_groups`.
+
 ## [1.0.0] - 2026-09-27
 
 Initial release. One module call provisions one AWS Global Accelerator, its listeners, and its endpoint groups, pointed at ALB/NLB ARNs or Elastic IP allocation IDs a caller supplies. There is no prior version and no migration.

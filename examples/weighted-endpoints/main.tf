@@ -19,8 +19,7 @@ module "global_accelerator" {
   }
 
   endpoint_groups = {
-    (var.region) = {
-      listener_key = "primary"
+    "primary/${var.region}" = {
       endpoint_configurations = [
         { endpoint_id = var.stable_alb_arn, weight = 255 - var.canary_weight },
         { endpoint_id = var.canary_alb_arn, weight = var.canary_weight },

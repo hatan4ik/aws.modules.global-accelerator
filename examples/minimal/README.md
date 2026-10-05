@@ -20,7 +20,7 @@ terraform plan \
   -var endpoint_id=arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/example/50dc6c495c0c9188
 ```
 
-`endpoint_id` is an existing ALB or NLB ARN, or an Elastic IP allocation ID; the module does not create it.
+`endpoint_id` is an existing ALB or NLB ARN in `region`, an Elastic IP allocation ID, or an EC2 instance ID; the module does not create it, but rejects a malformed ID at plan time.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -48,7 +48,7 @@ No resources.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_endpoint_id"></a> [endpoint\_id](#input\_endpoint\_id) | ARN or Elastic IP allocation ID of the single endpoint to accelerate, such as an existing ALB's ARN. | `string` | n/a | yes |
+| <a name="input_endpoint_id"></a> [endpoint\_id](#input\_endpoint\_id) | ALB/NLB ARN (in region), Elastic IP allocation ID, or EC2 instance ID of the single endpoint to accelerate, such as an existing ALB's ARN. | `string` | n/a | yes |
 | <a name="input_name"></a> [name](#input\_name) | Name of the accelerator. | `string` | `"minimal-example"` | no |
 | <a name="input_region"></a> [region](#input\_region) | AWS region the accelerator's control-plane resources are created in. Global Accelerator itself is a global service; this is where the Terraform provider operates. | `string` | `"us-east-1"` | no |
 
@@ -58,5 +58,5 @@ No resources.
 |------|-------------|
 | <a name="output_accelerator_arn"></a> [accelerator\_arn](#output\_accelerator\_arn) | ARN of the accelerator. |
 | <a name="output_accelerator_dns_name"></a> [accelerator\_dns\_name](#output\_accelerator\_dns\_name) | DNS name to point a Route 53 alias record at. |
-| <a name="output_ip_sets"></a> [ip\_sets](#output\_ip\_sets) | Static anycast IP addresses AWS assigned. |
+| <a name="output_ip_addresses"></a> [ip\_addresses](#output\_ip\_addresses) | Static anycast IP addresses AWS assigned, split into ipv4 and ipv6 lists. |
 <!-- END_TF_DOCS -->

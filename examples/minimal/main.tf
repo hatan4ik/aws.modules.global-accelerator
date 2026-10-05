@@ -17,8 +17,7 @@ module "global_accelerator" {
   # following ADR 0004 adds a second regional endpoint group; see
   # examples/two-region-alb.
   endpoint_groups = {
-    (var.region) = {
-      listener_key = "primary"
+    "primary/${var.region}" = {
       endpoint_configurations = [
         { endpoint_id = var.endpoint_id },
       ]
